@@ -1,0 +1,1395 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Loadline: system design practice</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#E9EDF1; --panel:#F8FAFC; --panel2:#E1E7ED; --ink:#16233A; --muted:#566779; --line:#C5CFDA; --grid:#BCC7D3;
+  --ok:#0E7C86; --warm:#A86F00; --hot:#BF3B33; --sel:#2F5BD3; --on-ok:#FFFFFF;
+  --okbg:#D5EAEA; --warmbg:#F3E6C4; --hotbg:#F5D9D6;
+  color-scheme:light;
+  box-sizing:border-box; padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0F1722; --panel:#162130; --panel2:#1E2B3C; --ink:#DCE4EE; --muted:#8C9CB1; --line:#2A3B50; --grid:#253447;
+    --ok:#33B8B5; --warm:#E3AE3C; --hot:#EC6E64; --sel:#7EA0FF; --on-ok:#0F1722;
+    --okbg:#173A3E; --warmbg:#3A3020; --hotbg:#3F2224;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0F1722; --panel:#162130; --panel2:#1E2B3C; --ink:#DCE4EE; --muted:#8C9CB1; --line:#2A3B50; --grid:#253447;
+  --ok:#33B8B5; --warm:#E3AE3C; --hot:#EC6E64; --sel:#7EA0FF; --on-ok:#0F1722;
+  --okbg:#173A3E; --warmbg:#3A3020; --hotbg:#3F2224;
+  color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:border-box}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font-family:"Schibsted Grotesk",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased}
+.mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+button,input{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--sel);outline-offset:2px}
+[hidden]{display:none!important}
+
+#app{height:100%;display:grid;grid-template-rows:auto 1fr;min-height:0}
+.top{display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line);min-width:0}
+.brand{display:flex;align-items:center;gap:8px;font-weight:700;font-size:17px;letter-spacing:-.01em;background:none;border:0;padding:4px 2px;cursor:pointer}
+.brand svg{width:26px;height:16px;color:var(--ok)}
+.crumb{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.crumb b{color:var(--ink);font-weight:600}
+.spacer{flex:1}
+.btn{font-weight:600;font-size:14px;border:1px solid var(--line);background:var(--panel);padding:7px 14px;border-radius:6px;cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:6px}
+.btn:hover{background:var(--panel2)}
+.btn.run{background:var(--ok);border-color:var(--ok);color:var(--on-ok)}
+.btn.run:hover{filter:brightness(1.08)}
+.btn.submit{background:var(--ink);border-color:var(--ink);color:var(--bg)}
+.btn.submit:hover{opacity:.9}
+.btn.small{padding:4px 10px;font-size:13px}
+.btn.danger{color:var(--hot)}
+.btn svg{width:14px;height:14px}
+.session-controls{display:flex;align-items:center;gap:7px;padding-right:4px}
+.session-clock{font-size:14px;font-weight:600;min-width:54px;text-align:center}
+.session-clock.running{color:var(--ok)}
+
+/* Home */
+#home{overflow:auto;min-height:0}
+.home-in{max-width:980px;margin:0 auto;padding:56px 24px 64px}
+.home-in h1{font-size:clamp(34px,5vw,52px);line-height:1.05;letter-spacing:-.025em;margin:0 0 16px;font-weight:700;max-width:16ch}
+.lede{color:var(--muted);font-size:18px;max-width:58ch;margin:0 0 36px}
+.homegrid{display:grid;grid-template-columns:1fr 260px;gap:32px;align-items:start}
+.plist{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.filters{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:14px}
+.filters input{flex:1 1 220px;min-width:0;padding:8px 12px;border:1px solid var(--line);border-radius:6px;background:var(--panel)}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;background:var(--panel)}
+.seg button{border:0;background:none;padding:7px 11px;font-size:13px;font-weight:500;color:var(--muted);cursor:pointer;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--bg)}
+.group{font-size:14px;font-weight:600;color:var(--muted);padding:10px 18px;background:var(--panel2);border-bottom:1px solid var(--line)}
+.noresults{padding:22px 18px;color:var(--muted)}
+.prow{display:grid;grid-template-columns:28px 1fr 84px;gap:12px;align-items:center;padding:14px 18px;border-bottom:1px solid var(--line);cursor:pointer;text-decoration:none;color:inherit}
+.prow:last-child{border-bottom:0}
+.prow:hover{background:var(--panel2)}
+.prow .pt{font-weight:600}
+.prow .tags{display:block;color:var(--muted);font-size:13px;font-weight:400;margin-top:2px}
+.check{width:20px;height:20px;border-radius:50%;border:1.5px solid var(--line);display:grid;place-items:center}
+.check.done{background:var(--ok);border-color:var(--ok);color:var(--on-ok)}
+.check svg{width:12px;height:12px}
+.diff{font-weight:600;font-size:14px;text-align:right}
+.diff.Easy{color:var(--ok)}.diff.Medium{color:var(--warm)}.diff.Hard{color:var(--hot)}
+.side{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px}
+.side h2{font-size:15px;margin:0 0 4px}
+.side p{margin:0 0 12px;color:var(--muted);font-size:14px}
+.prog{font-size:34px;font-weight:700;letter-spacing:-.02em;line-height:1}
+.prog small{font-size:15px;color:var(--muted);font-weight:500;letter-spacing:0}
+.how{margin:18px 0 0;padding:0 0 0 18px;font-size:14px;color:var(--muted)}
+.how li{margin-bottom:6px}
+
+/* Workspace */
+#workspace{display:grid;grid-template-columns:minmax(320px,36%) 1fr;min-height:0}
+.left{display:grid;grid-template-rows:auto 1fr;min-height:0;border-right:1px solid var(--line);background:var(--panel)}
+.tabs{display:flex;gap:2px;padding:0 12px;border-bottom:1px solid var(--line);overflow-x:auto}
+.tab{background:none;border:0;border-bottom:2px solid transparent;padding:10px 10px 9px;font-weight:500;font-size:14px;color:var(--muted);cursor:pointer;white-space:nowrap}
+.tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--ink)}
+.lcontent{overflow:auto;padding:20px 22px 40px;min-height:0}
+.lcontent h2{font-size:22px;letter-spacing:-.015em;margin:0 0 6px;line-height:1.2}
+.meta{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:16px;font-size:13px}
+.pill{border:1px solid var(--line);border-radius:999px;padding:1px 9px;color:var(--muted)}
+.lcontent p{margin:0 0 12px;max-width:68ch}
+.lcontent h3{font-size:15px;margin:22px 0 8px}
+.req{width:100%;border-collapse:collapse;font-size:14px}
+.req td{padding:7px 0;border-bottom:1px solid var(--line);vertical-align:top}
+.req td:last-child{text-align:right;font-weight:600}
+.lcontent ul{padding-left:18px;margin:0}
+.lcontent li{margin-bottom:6px}
+.interview{max-width:720px}
+.interview-kicker{display:flex;justify-content:space-between;align-items:center;gap:10px;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.08em;font-weight:600;margin-bottom:8px}
+.stage-rail{display:grid;grid-template-columns:repeat(5,minmax(56px,1fr));gap:5px;margin:16px 0 20px}
+.stage-rail button{min-width:0;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--muted);padding:7px 5px;font-size:11px;cursor:pointer}
+.stage-rail button[aria-current="step"]{border-color:var(--ok);color:var(--ink);box-shadow:inset 0 -2px var(--ok)}
+.stage-rail button.done{color:var(--ok)}
+.interview-prompt{padding:13px 14px;border-left:3px solid var(--ok);background:var(--panel2);border-radius:0 7px 7px 0;margin:14px 0}
+.interview-prompt b{display:block;font-size:13px;margin-bottom:3px}
+.interview-prompt p{margin:0;color:var(--muted);font-size:14px}
+.estimate-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0 18px}
+.estimate{padding:10px 12px;border:1px solid var(--line);border-radius:7px;background:var(--bg)}
+.estimate span{display:block;color:var(--muted);font-size:12px}
+.estimate b{font-size:15px}
+.interview textarea{display:block;width:100%;min-height:120px;resize:vertical;padding:10px 12px;border:1px solid var(--line);border-radius:7px;background:var(--bg);color:var(--ink);font:inherit;line-height:1.5}
+.interview textarea:focus{border-color:var(--sel)}
+.interview-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px}
+.interview-actions .spacer{flex:1}
+.interview-actions .note{font-size:12px}
+.interview-checks{padding-left:18px;color:var(--muted);font-size:14px}
+.interview-checks li{margin-bottom:7px}
+.ref-reveal{border:1px solid var(--line);border-radius:7px;margin-top:16px;background:var(--bg)}
+.ref-reveal summary{padding:10px 12px;cursor:pointer;font-weight:600}
+.ref-body{padding:0 12px 12px}
+.dgwrap{overflow-x:auto;border:1px solid var(--line);border-radius:8px;background-color:var(--bg);background-image:radial-gradient(var(--grid) 1px,transparent 1.3px);background-size:16px 16px;padding:10px;margin:8px 0 12px}
+.diagram{display:block;width:100%;min-width:480px;height:auto}
+.dg-edge{fill:none;stroke:var(--ok);stroke-width:2}
+.dg-arh{fill:var(--ok)}
+.dg-node{fill:var(--panel);stroke:var(--line);stroke-width:1.5}
+.dg-client{stroke-dasharray:5 4}
+.dg-ico{color:var(--muted)}
+.dg-name{font:600 13px "Schibsted Grotesk",system-ui,sans-serif;fill:var(--ink)}
+.dg-sub{font:500 11.5px "IBM Plex Mono",ui-monospace,monospace;fill:var(--muted)}
+.dg-lbl{fill:var(--okbg);stroke:var(--ok);stroke-width:1}
+.dg-lt{font:500 11px "IBM Plex Mono",ui-monospace,monospace;fill:var(--ink)}
+.dg-overlay{position:fixed;inset:0;background:color-mix(in srgb,var(--bg) 94%,transparent);z-index:40;display:grid;place-items:center;padding:calc(56px + env(safe-area-inset-top,0px)) 16px calc(16px + env(safe-area-inset-bottom,0px))}
+.dg-overlay .dgwrap{width:min(1240px,100%);max-height:100%;overflow:auto;margin:0}
+.dg-overlay .diagram{min-width:760px}
+.dg-close{position:absolute;top:calc(12px + env(safe-area-inset-top,0px));right:16px}
+.hint{border:1px solid var(--line);border-radius:8px;margin-bottom:10px;background:var(--bg)}
+.hint summary{cursor:pointer;padding:10px 14px;font-weight:600}
+.hint p{padding:0 14px 12px;margin:0}
+.note{color:var(--muted);font-size:14px}
+.subrow{display:grid;grid-template-columns:1fr auto auto;gap:12px;padding:9px 0;border-bottom:1px solid var(--line);font-size:14px}
+.okt{color:var(--ok);font-weight:600}.hott{color:var(--hot);font-weight:600}.warmt{color:var(--warm);font-weight:600}
+
+.right{display:grid;grid-template-rows:auto 1fr auto;min-height:0;min-width:0}
+.palette{display:flex;flex-wrap:wrap;gap:6px;padding:8px 12px;border-bottom:1px solid var(--line);background:var(--panel);align-items:center;max-height:40vh;overflow-y:auto}
+.palette .lbl{font-size:12.5px;color:var(--muted);margin-right:4px}
+.zoombar{position:sticky;left:12px;bottom:12px;display:inline-flex;gap:4px;align-items:center;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:4px;z-index:4;margin:0 0 12px 12px;box-shadow:0 2px 8px rgba(10,20,35,.08)}
+.zoombar button{min-width:30px;height:28px;border:0;border-radius:5px;background:none;cursor:pointer;font-weight:600;font-size:13px;padding:0 8px}
+.zoombar button:hover{background:var(--panel2)}
+.zoombar span{font-size:12px;color:var(--muted);min-width:40px;text-align:center}
+#sizer{position:relative}
+.world{transform-origin:0 0}
+.connecting .node:not(.src){outline:2px dashed var(--sel);outline-offset:3px;cursor:copy}
+.node.src{border-color:var(--sel)}
+.conlist{display:flex;flex-direction:column;gap:4px;margin:0 0 12px;font-size:13px}
+.conlist div{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.conlist button{background:none;border:0;color:var(--hot);cursor:pointer;font-size:12px}
+.inspector select{width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);margin-bottom:12px}
+.inspector label{font-size:13px;font-weight:600;display:block;margin-bottom:4px}
+@media (pointer:coarse){.port{width:26px;height:26px;margin-top:-13px;right:-13px}}
+.chip{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);cursor:grab;white-space:nowrap;font-size:12.5px;font-weight:500;touch-action:none;user-select:none}
+.chip:hover{border-color:var(--muted)}
+.ico{display:inline-grid;place-items:center;width:18px;height:18px;color:var(--muted);flex:none}
+.ico svg{width:16px;height:16px}
+.stage{position:relative;overflow:auto;min-height:0}
+.world{position:relative;width:1600px;height:900px;background-image:radial-gradient(var(--grid) 1px,transparent 1.3px);background-size:20px 20px}
+.edges{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.edge-hit{stroke:transparent;stroke-width:16;fill:none;cursor:pointer}
+.edge-line{fill:none;stroke-width:2;stroke:var(--muted);opacity:.55;transition:stroke .3s}
+.edge-line.ok{stroke:var(--ok);opacity:.9}.edge-line.warm{stroke:var(--warm);opacity:.95}.edge-line.hot{stroke:var(--hot);opacity:1}
+.edge-line.sel{stroke:var(--sel);opacity:1;stroke-width:3}
+.dot{r:3.2}
+.dot.ok{fill:var(--ok)}.dot.warm{fill:var(--warm)}.dot.hot{fill:var(--hot)}
+.temp{fill:none;stroke:var(--sel);stroke-width:2;stroke-dasharray:5 4}
+.node{position:absolute;width:158px;height:66px;background:var(--panel);border:1.5px solid var(--line);border-radius:8px;padding:7px 10px 0;cursor:grab;user-select:none;touch-action:none;box-shadow:0 1px 0 var(--line)}
+.node:active{cursor:grabbing}
+.node.client{border-style:dashed}
+.node.warm{border-color:var(--warm)}
+.node.hot{border-color:var(--hot);background:var(--hotbg)}
+.node.sel{border-color:var(--sel);box-shadow:0 0 0 3px color-mix(in srgb,var(--sel) 25%,transparent)}
+.nhead{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;line-height:1.2}
+.nname{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nrep{font-size:12px;color:var(--muted);font-weight:500}
+.nrep.down{color:var(--hot)}
+.nstat{font-size:11.5px;color:var(--muted);margin-top:5px;white-space:nowrap;overflow:hidden}
+.bar{position:absolute;left:10px;right:10px;bottom:8px;height:4px;border-radius:2px;background:var(--panel2);overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:var(--ok);transition:width .25s}
+.bar i.warm{background:var(--warm)}.bar i.hot{background:var(--hot)}
+.port{position:absolute;right:-8px;top:50%;width:16px;height:16px;margin-top:-8px;border-radius:50%;background:var(--panel);border:2px solid var(--muted);cursor:crosshair}
+.port:hover{border-color:var(--sel);background:var(--sel)}
+.inport{position:absolute;left:-5px;top:50%;width:8px;height:8px;margin-top:-4px;border-radius:50%;background:var(--muted)}
+.empty-canvas{position:absolute;left:230px;top:150px;max-width:360px;color:var(--muted);font-size:14px;pointer-events:none}
+.empty-canvas b{color:var(--ink);display:block;font-size:16px;margin-bottom:4px}
+
+.inspector{position:absolute;top:12px;right:12px;width:270px;max-height:calc(100% - 24px);overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;box-shadow:0 6px 24px rgba(10,20,35,.12);z-index:5}
+.inspector h4{margin:0 0 4px;font-size:16px;display:flex;align-items:center;gap:8px}
+.inspector p{margin:0 0 10px;font-size:13px;color:var(--muted)}
+.specs{display:grid;grid-template-columns:1fr auto;gap:2px 10px;font-size:13px;margin-bottom:12px}
+.specs span:nth-child(even){text-align:right;font-weight:600}
+.stepper{display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:14px}
+.stepper button{width:30px;height:30px;border-radius:6px;border:1px solid var(--line);background:var(--bg);cursor:pointer;font-size:16px;line-height:1}
+.stepper .v{min-width:24px;text-align:center;font-weight:700}
+.irow{display:flex;gap:8px;flex-wrap:wrap}
+.xbtn{position:absolute;top:8px;right:8px;background:none;border:0;cursor:pointer;color:var(--muted);font-size:18px;line-height:1;padding:4px 6px}
+
+.console{border-top:1px solid var(--line);background:var(--panel);display:grid;grid-template-rows:auto auto;min-height:0}
+.chead{display:flex;align-items:center;gap:12px;padding:0 12px 0 4px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.chead .tabs{border:0;padding:0 8px}
+.ctrl{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--muted);padding:6px 0}
+.ctrl input[type=range]{width:140px;accent-color:var(--ok)}
+.ctrl b{color:var(--ink);font-weight:600}
+.cbody{padding:10px 16px 12px;height:180px;overflow:auto}
+.charts{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:12px}
+.chart{border:1px solid var(--line);border-radius:8px;padding:8px 10px 6px;background:var(--bg);min-width:0}
+.chart .ct{display:flex;justify-content:space-between;align-items:baseline;font-size:12.5px;color:var(--muted);gap:6px}
+.chart .cv{font-size:17px;font-weight:600;color:var(--ink)}
+.chart .cv.hot{color:var(--hot)}.chart .cv.ok{color:var(--ok)}
+.chart canvas{width:100%;height:64px;display:block;margin-top:4px}
+.chart .lim{font-size:11.5px;color:var(--muted)}
+.idle{color:var(--muted);font-size:14px;margin:0 0 10px}
+.banner{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:10px}
+.banner .verdict{font-size:20px;font-weight:700;letter-spacing:-.01em}
+.banner .verdict.okt{color:var(--ok)}.banner .verdict.hott{color:var(--hot)}
+.banner span{color:var(--muted);font-size:14px}
+.tests{display:grid;grid-template-columns:repeat(3,minmax(180px,1fr));gap:10px}
+.test{border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:var(--bg);font-size:13px}
+.test.pass{border-left:4px solid var(--ok)}.test.fail{border-left:4px solid var(--hot)}
+.test h5{margin:0 0 6px;font-size:14px;display:flex;justify-content:space-between;gap:8px}
+.test .m{display:flex;justify-content:space-between;gap:8px;padding:1px 0}
+.test .m .bad{color:var(--hot);font-weight:600}
+.review{margin-top:16px;border:1px solid var(--line);border-radius:8px;padding:14px 16px;background:var(--panel)}
+.review h3{font-size:15px;margin:0 0 5px}
+.review p{margin:0 0 10px;color:var(--muted);font-size:13px}
+.review-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px}
+.review-item{padding:9px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);font-size:13px}
+.review-item b{display:block;margin-bottom:3px}
+.review-item span{color:var(--muted)}
+.issues{margin:0;padding-left:18px}
+.issues li{margin-bottom:4px}
+
+.toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:9px 16px;border-radius:8px;font-size:14px;z-index:50;box-shadow:0 8px 24px rgba(0,0,0,.2);display:flex;gap:12px;align-items:center}
+.toast button{background:none;border:0;color:inherit;font-weight:700;text-decoration:underline;cursor:pointer;padding:0}
+.ghost{position:fixed;pointer-events:none;z-index:60;opacity:.85}
+
+@media (max-width:860px){
+  .homegrid{grid-template-columns:1fr}
+  .home-in{padding:32px 16px 48px}
+  #workspace{display:block;overflow:auto}
+  .left{border-right:0;border-bottom:1px solid var(--line)}
+  .lcontent{max-height:none;overflow:visible}
+  .right{display:block}
+  .stage{height:62vh}
+  .charts{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .tests{grid-template-columns:1fr}
+  .stage-rail{grid-template-columns:repeat(5,minmax(0,1fr))}
+  .stage-rail button{font-size:10px;padding:7px 2px}
+  .session-controls{gap:4px}
+  .session-controls .btn{padding:5px 7px;font-size:12px}
+  .cbody{height:auto;max-height:none}
+  .crumb{display:none}
+  .inspector{top:auto;bottom:12px;left:12px;right:12px;width:auto}
+}
+@media (prefers-reduced-motion:reduce){.bar i,.edge-line{transition:none}}
+</style>
+</head>
+<body>
+<div id="app">
+  <header class="top">
+    <button class="brand" id="brand" aria-label="Loadline, all problems">
+      <svg viewBox="0 0 26 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 8h5l2.5-6 4 12 3-9 2 3H25"/></svg>
+      Loadline
+    </button>
+    <div class="crumb" id="crumb"></div>
+    <div class="spacer"></div>
+    <div id="sessionControls" class="session-controls" hidden>
+      <span id="sessionClock" class="session-clock mono" aria-live="off">45:00</span>
+      <button class="btn small" id="sessionToggle">Start interview</button>
+      <button class="btn small" id="sessionReset">Reset timer</button>
+    </div>
+    <div id="wsActions" hidden style="display:flex;gap:8px">
+      <button class="btn run" id="runBtn"><svg viewBox="0 0 14 14"><path d="M3 2l9 5-9 5z" fill="currentColor"/></svg><span>Run</span></button>
+      <button class="btn submit" id="submitBtn">Submit</button>
+    </div>
+  </header>
+
+  <main id="home">
+    <div class="home-in">
+          <h1>Practice system design like an interview</h1>
+          <p class="lede">Take a problem from vague prompt to defended architecture. Clarify the requirements, estimate scale, draw the system, test its limits, and explain your tradeoffs.</p>
+      <div class="homegrid">
+        <div>
+          <div class="filters">
+            <input type="search" id="q" placeholder="Search problems or topics" aria-label="Search problems">
+            <div class="seg" id="fCat" role="group" aria-label="Category"><button data-v="all" aria-pressed="true">All</button><button data-v="web" aria-pressed="false">Web and product</button><button data-v="data" aria-pressed="false">Data engineering</button></div>
+            <div class="seg" id="fDiff" role="group" aria-label="Difficulty"><button data-v="all" aria-pressed="true">Any</button><button data-v="Easy" aria-pressed="false">Easy</button><button data-v="Medium" aria-pressed="false">Medium</button><button data-v="Hard" aria-pressed="false">Hard</button></div>
+          </div>
+          <div class="plist" id="plist" role="list"></div>
+        </div>
+        <aside class="side">
+          <h2>Your progress</h2>
+          <p>Saved in this browser.</p>
+          <div class="prog" id="prog"></div>
+          <ol class="how">
+            <li>Start a 45-minute round and clarify scope.</li>
+            <li>Estimate traffic, storage, and read/write mix.</li>
+            <li>Draw the architecture and narrate tradeoffs.</li>
+            <li>Test a spike and node failure, then debrief.</li>
+          </ol>
+          <h2 style="margin-top:18px">What a strong answer covers</h2>
+          <ul class="how">
+            <li>Core use cases, constraints, and explicit assumptions.</li>
+            <li>Capacity estimates, API shape, and data model.</li>
+            <li>Partitioning, consistency, failure recovery, and tradeoffs.</li>
+          </ul>
+          <p class="note">The canvas checks traffic, latency, capacity, and cost. Use your interview notes to defend API and data choices the simulator cannot score.</p>
+        </aside>
+      </div>
+    </div>
+  </main>
+
+  <main id="workspace" hidden>
+    <section class="left">
+      <div class="tabs" role="tablist" id="ltabs">
+        <button class="tab" role="tab" data-tab="interview" aria-selected="true">Interview</button>
+        <button class="tab" role="tab" data-tab="desc" aria-selected="false">Brief</button>
+        <button class="tab" role="tab" data-tab="hints" aria-selected="false">Hints</button>
+        <button class="tab" role="tab" data-tab="diagram" aria-selected="false">Solution diagram</button>
+        <button class="tab" role="tab" data-tab="sol" aria-selected="false">Solution</button>
+        <button class="tab" role="tab" data-tab="subs" aria-selected="false">Submissions</button>
+      </div>
+      <div class="lcontent" id="lcontent"></div>
+    </section>
+    <section class="right">
+      <div class="palette" id="palette"><span class="lbl" title="Click adds the component after the selected node and connects it. Drag to place it anywhere.">Add (auto-connects):</span></div>
+      <div class="stage" id="stage">
+        <div id="sizer"><div class="world" id="world">
+          <svg class="edges" id="edges">
+            <defs>
+              <marker id="ar-idle" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker>
+              <marker id="ar-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--ok)"/></marker>
+              <marker id="ar-warm" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--warm)"/></marker>
+              <marker id="ar-hot" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--hot)"/></marker>
+              <marker id="ar-sel" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--sel)"/></marker>
+            </defs>
+            <g id="edgeLayer"></g>
+            <path class="temp" id="tempEdge" d="" hidden></path>
+          </svg>
+          <div id="nodeLayer"></div>
+          <div class="empty-canvas" id="emptyCanvas"><b>Start from the traffic source</b>Click a component above: it’s added after the selected node and connected for you. Keep clicking to build a chain. To branch, select a node first.</div>
+        </div></div>
+        <div class="zoombar" role="group" aria-label="Zoom"><button id="zOut" aria-label="Zoom out">−</button><span id="zLbl" class="mono">100%</span><button id="zIn" aria-label="Zoom in">+</button><button id="zFit">Fit</button></div>
+        <div class="inspector" id="inspector" hidden></div>
+      </div>
+      <div class="console">
+        <div class="chead">
+          <div class="tabs" role="tablist" id="ctabs">
+            <button class="tab" role="tab" data-ctab="live" aria-selected="true">Live metrics</button>
+            <button class="tab" role="tab" data-ctab="res" aria-selected="false">Test results</button>
+          </div>
+          <div class="spacer"></div>
+          <div class="ctrl">
+            <label for="mult">Traffic <b id="multLbl"></b></label>
+            <input type="range" id="mult" min="0.5" max="3" step="0.1" value="1">
+            <button class="btn small" id="resetBtn">Reset</button>
+          </div>
+          <div class="ctrl">Monthly cost <b id="costLbl" class="mono"></b></div>
+        </div>
+        <div class="cbody" id="cLive">
+          <p class="idle" id="liveIdle">Press Run to send traffic through your design. Each node shows its load as it happens; edges turn amber above 80% utilization and red when a component is dropping requests.</p>
+          <div class="charts" id="charts"></div>
+        </div>
+        <div class="cbody" id="cRes" hidden></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+/* ---------- Components ---------- */
+const C = {
+  client:{name:'Clients',cap:Infinity,lat:0,cost:0},
+  lb:{name:'Load balancer',cap:60000,lat:1,cost:20,desc:'Spreads requests evenly across everything connected after it. The only component that splits traffic instead of sending it to every downstream.'},
+  api:{name:'API server',cap:4000,lat:20,cost:70,desc:'Stateless application servers. Every request calls each component connected after it.'},
+  cache:{name:'Cache',cap:40000,lat:1,cost:120,hit:0.85,desc:'In-memory key-value store such as Redis. 85% of reads hit and return; misses and writes continue downstream.'},
+  cdn:{name:'CDN',cap:200000,lat:4,cost:200,hit:0.92,desc:'Edge cache close to users. 92% of reads are served at the edge.'},
+  sql:{name:'SQL database',cap:3000,lat:12,cost:250,desc:'Relational OLTP database such as Postgres. Replicas add read capacity.'},
+  nosql:{name:'NoSQL store',cap:15000,lat:6,cost:300,desc:'Key-value or wide-column store such as Cassandra or DynamoDB. Scales horizontally.'},
+  queue:{name:'Kafka topic',cap:50000,lat:3,cost:150,desc:'Durable log. Acknowledges writes quickly and buffers bursts. Every connected consumer gets the full stream and reads at its own pace; backlog shows up as lag.'},
+  stream:{name:'Stream processor',cap:20000,lat:15,cost:180,ratio:0.1,desc:'Flink or Spark Structured Streaming job. Emits windowed aggregates, about 10% of its input volume.'},
+  s3:{name:'Object storage',cap:100000,lat:40,cost:30,desc:'Data lake storage such as S3 or GCS. Cheap and durable, slow per request.'},
+  dwh:{name:'Warehouse',cap:20000,lat:80,cost:400,desc:'Analytics warehouse with streaming ingest, such as Snowflake or BigQuery.'},
+  ratelimit:{name:'Rate limiter',cap:80000,lat:1,cost:40,filter:true,desc:'Rejects clients that exceed their quota (token bucket). Over-quota traffic stops here and counts as correctly handled.'},
+  ws:{name:'WebSocket gateway',cap:20000,lat:2,cost:120,desc:'Holds persistent connections for push and real-time updates. Much cheaper per message than request/response API servers.'},
+  worker:{name:'Workers',cap:5000,lat:50,cost:60,desc:'Background job consumers for slow tasks such as fan-out, fetching or calling providers.'},
+  search:{name:'Search index',cap:8000,lat:25,cost:350,desc:'Full-text and prefix search cluster such as Elasticsearch or OpenSearch.'},
+  tsdb:{name:'Time-series DB',cap:60000,lat:5,cost:400,desc:'Optimized for append-heavy metric points and range queries, such as InfluxDB, M3 or Prometheus remote storage.'},
+  extapi:{name:'Third-party API',cap:10000,lat:200,cost:0,maxRep:1,desc:'External provider such as APNs, Twilio or Stripe. Fixed rate quota; you can’t add replicas.'}
+};
+const PALETTE = ['lb','ratelimit','api','ws','cache','cdn','sql','nosql','search','queue','stream','worker','s3','dwh','tsdb','extapi'];
+const I = (p)=>`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
+const ICON = {
+  client:I('<circle cx="8" cy="5" r="2.8"/><path d="M2.5 14c.8-2.8 3-4 5.5-4s4.7 1.2 5.5 4"/>'),
+  lb:I('<circle cx="8" cy="3" r="1.6"/><circle cx="3" cy="13" r="1.6"/><circle cx="8" cy="13" r="1.6"/><circle cx="13" cy="13" r="1.6"/><path d="M8 4.6v6.8M7 4.4L3.8 11.5M9 4.4l3.2 7.1"/>'),
+  api:I('<rect x="2" y="2.5" width="12" height="4.5" rx="1"/><rect x="2" y="9" width="12" height="4.5" rx="1"/><path d="M4.5 4.75h.01M4.5 11.25h.01"/>'),
+  cache:I('<path d="M9.2 1.5L3.5 9h4.3l-1 5.5L12.5 7H8.2z"/>'),
+  cdn:I('<circle cx="8" cy="8" r="6"/><ellipse cx="8" cy="8" rx="2.6" ry="6"/><path d="M2 8h12"/>'),
+  sql:I('<ellipse cx="8" cy="3.8" rx="5" ry="2"/><path d="M3 3.8v8.4c0 1.1 2.2 2 5 2s5-.9 5-2V3.8M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>'),
+  nosql:I('<rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/>'),
+  queue:I('<rect x="1.5" y="5" width="13" height="6" rx="1"/><path d="M5.5 5v6M9.5 5v6"/>'),
+  stream:I('<path d="M1.5 6c2-3 4-3 6.5 0s4.5 3 6.5 0M1.5 11c2-3 4-3 6.5 0s4.5 3 6.5 0"/>'),
+  s3:I('<ellipse cx="8" cy="4" rx="5.5" ry="1.8"/><path d="M2.5 4l1.4 9c.2 1 2 1.6 4.1 1.6s3.9-.6 4.1-1.6l1.4-9"/>'),
+  dwh:I('<path d="M2 14h12M4 12V7M8 12V3M12 12V9"/>'),
+  ratelimit:I('<path d="M2.5 11.5a5.5 5.5 0 1 1 11 0"/><path d="M8 11.5l3-3.5"/>'),
+  ws:I('<path d="M2 5.5h11M10 2.5l3 3-3 3M14 10.5H3M6 7.5l-3 3 3 3"/>'),
+  worker:I('<circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"/>'),
+  search:I('<circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/>'),
+  tsdb:I('<path d="M2 2v12h12"/><path d="M4.5 10l3-3.5 2.5 2 4-5"/>'),
+  extapi:I('<path d="M9 2h5v5M14 2L7.5 8.5"/><path d="M12 9.5V13a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h3.5"/>')
+};
+
+/* ---------- Problems ---------- */
+const P = [
+/* ===== Web & product ===== */
+{id:'video-cdn',cat:'web',title:'Serve video segments worldwide',diff:'Easy',tags:['CDN','Caching','Object storage'],source:'Viewers',unit:'req/s',rate:80000,read:1,spike:2,failType:'cdn',
+ crit:{p99:80,err:0.5,cost:600},need:[],reach:[['s3']],
+ desc:'<p>Viewers around the world request two-second video segments, as on YouTube or Netflix. Every segment lives in object storage in one region, which is cheap and durable but slow and far from most viewers.</p><p>Design the delivery path so playback starts fast and keeps going when an edge location goes down.</p>',
+ hints:['Object storage alone can technically carry this traffic. Run it and watch p99 latency.','Segments never change once written, so nearly every request can be served from a cache close to the viewer.','The failure test takes one replica of the edge layer down. One of anything is a single point of failure.'],
+ sol:'<p>Put a CDN with two replicas in front of object storage. With a 92% hit rate only about 6.4k req/s reach the origin, so a single storage replica is plenty and latency is dominated by the 4 ms edge hop.</p><p>The second CDN replica exists only to pass the failure test. That’s the real cost of availability: you pay for capacity you hope never to use.</p>',
+ ref:{nodes:[['client',40,220,1],['cdn',290,220,2],['s3',540,220,1]],edges:[[0,1],[1,2]]}},
+{id:'url-shortener',cat:'web',title:'Design a URL shortener',diff:'Easy',tags:['Load balancing','Caching','SQL'],source:'Users',unit:'req/s',rate:4000,read:0.95,spike:2,failType:'api',
+ crit:{p99:120,err:0.5,cost:1200},need:['lb'],reach:[['sql','nosql']],
+ desc:'<p>Users create short links and, far more often, follow them, as on bit.ly or TinyURL. Every redirect is a lookup from short code to long URL. Writes are rare and tiny.</p><p>Keep redirects fast, survive a traffic spike when a link goes viral, and stay up when an app server dies.</p>',
+ hints:['95% of requests are reads of a small set of hot links. Where should those reads stop?','Each API server handles about 4k req/s. Leave headroom for the 2× spike and for losing one replica.','A load balancer has to sit in front of the API servers to spread traffic across replicas.'],
+ sol:'<p>Users → load balancer → 3 API servers → cache → 1 SQL database.</p><p>At the 2× spike, 8k req/s across three servers keeps them at 67% utilization. In the failure test two servers carry the normal 4k comfortably.</p><p>The cache absorbs about 81% of all requests, so the database sees roughly 1.5k queries/s at peak. Without the cache you need four database replicas to keep p99 down, which blows the budget.</p><p>Not modeled here but worth discussing: short-code generation (base62 of a counter vs. hashing), and 301 vs. 302 redirects.</p>',
+ ref:{nodes:[['client',40,220,1],['lb',250,220,1],['api',460,220,3],['cache',670,220,1],['sql',880,220,1]],edges:[[0,1],[1,2],[2,3],[3,4]]}},
+{id:'pastebin',cat:'web',title:'Design Pastebin',diff:'Easy',tags:['Object storage','Caching','Metadata'],source:'Users',unit:'req/s',rate:3000,read:0.9,spike:2,failType:'api',
+ crit:{p99:150,err:0.5,cost:900},need:['lb'],reach:[['s3'],['sql','nosql']],
+ desc:'<p>Users paste text and share a link to it. Paste bodies can be large, so they belong in object storage; metadata such as owner, expiry and syntax lives in a database.</p><p>Reads dominate. Keep page loads fast even though object storage is slow.</p>',
+ hints:['Each request has to reach both the metadata and the paste body. Fetching the body from object storage every time costs 40 ms or more.','A cache in front of both stores can hold recently viewed pastes, metadata and body together.','Everything connected after a cache only sees misses and writes.'],
+ sol:'<p>Users → load balancer → 3 API servers → cache, with the cache connected to both SQL (metadata) and object storage (bodies).</p><p>The cache serves about 77% of requests. Only misses pay the 40 ms trip to object storage, which keeps p99 near 100 ms. Without the cache every request waits on object storage and p99 lands around 160 ms.</p>',
+ ref:{nodes:[['client',40,220,1],['lb',250,220,1],['api',460,220,3],['cache',670,220,1],['sql',900,120,1],['s3',900,320,1]],edges:[[0,1],[1,2],[2,3],[3,4],[3,5]]}},
+{id:'leaderboard',cat:'web',title:'Real-time gaming leaderboard',diff:'Easy',tags:['Redis sorted sets','Async persistence'],source:'Players',unit:'req/s',rate:20000,read:0.8,spike:1.5,failType:'cache',
+ crit:{p99:120,err:0.5,cost:1800},need:['cache'],reach:[['sql','nosql']],
+ desc:'<p>Players submit scores after every match and constantly check the top 100 and their own rank. Ranking queries over millions of players are too slow for a relational database at this rate.</p><p>Serve ranks from memory, but don’t lose scores if the cache restarts.</p>',
+ hints:['Redis sorted sets give rank lookups in O(log n). Use the cache as the primary store for rankings.','Persist score writes to the database asynchronously instead of on the request path.','Kafka topics only receive the write share of traffic. Reads never go there.'],
+ sol:'<p>Players → load balancer → 9 API servers → cache (2 replicas). The cache forwards to a Kafka topic, and a worker writes scores to SQL for durability.</p><p>Only writes that reach the topic go to the database, about 1.3k/s, so one SQL replica is enough. Serving every rank query from SQL would need around ten replicas.</p>',
+ ref:{nodes:[['client',40,220,1],['lb',250,220,1],['api',460,220,9],['cache',670,220,2],['queue',880,220,1],['worker',1090,220,1],['sql',1300,220,1]],edges:[[0,1],[1,2],[2,3],[3,4],[4,5],[5,6]]}},
+{id:'rate-limiter',cat:'web',title:'Rate limiter for a public API',diff:'Medium',tags:['Rate limiting','Abuse protection'],source:'API clients',unit:'req/s',rate:10000,read:0.7,abuse:0.4,spike:2,failType:'api',
+ crit:{p99:150,err:0.5,cost:800},need:['lb'],reach:[['sql','nosql']],
+ desc:'<p>Your public API is popular with legitimate developers and with scrapers. About 40% of traffic comes from clients that blow through their quota, and a bot wave doubles traffic during the spike test.</p><p>Protect the backend without paying to serve abusive traffic. Requests correctly rejected by a limiter count as handled, not as errors.</p>',
+ hints:['Run without a limiter and price out the API tier you’d need to absorb the bot wave.','A rate limiter at the edge rejects over-quota clients before they reach anything expensive.','In a real system the limiter keeps per-client counters (token bucket or sliding window) in a shared store such as Redis.'],
+ sol:'<p>Clients → rate limiter → load balancer → 4 API servers → NoSQL.</p><p>The limiter drops the 40% abusive share, so the backend only sizes for legitimate traffic: 12k req/s at the spike. Without it you need six API servers and two NoSQL replicas, which is over budget.</p><p>Discussion points: token bucket vs. sliding window log, where to keep counters, and returning 429 with Retry-After.</p>',
+ ref:{nodes:[['client',40,220,1],['ratelimit',250,220,1],['lb',460,220,1],['api',670,220,4],['nosql',880,220,1]],edges:[[0,1],[1,2],[2,3],[3,4]]}},
+{id:'product-catalog',cat:'web',title:'Product catalog during a flash sale',diff:'Medium',tags:['Caching','Capacity planning'],source:'Shoppers',unit:'req/s',rate:12000,read:0.98,spike:1.5,failType:'cache',
+ crit:{p99:100,err:0.5,cost:1400},need:['lb'],reach:[['sql','nosql']],
+ desc:'<p>During a flash sale shoppers hammer product pages. Almost every request is a read of product details and price; inventory writes are a small fraction.</p><p>The budget is tight, so you can’t brute-force it with database replicas. Hot servers are slow servers, so watch utilization during the spike, not just whether requests get through.</p>',
+ hints:['Price out serving every read from SQL at 18k req/s. Then add a cache and compare.','The failure test takes down a cache replica. If you only have one, every request fails with it.','At 75%+ utilization latency climbs steeply. Size the API tier for the spike, not the average.'],
+ sol:'<p>Shoppers → load balancer → 7 API servers → cache (2 replicas) → SQL (2 replicas).</p><p>Seven API servers keep the 18k req/s spike at 64% utilization. The cache serves 83% of traffic, leaving about 3k queries/s for the database at peak, which needs two replicas. The second cache replica is for the failure test.</p>',
+ ref:{nodes:[['client',40,220,1],['lb',250,220,1],['api',460,220,7],['cache',670,220,2],['sql',880,220,2]],edges:[[0,1],[1,2],[2,3],[3,4]]}},
+{id:'autocomplete',cat:'web',title:'Search autocomplete (typeahead)',diff:'Medium',tags:['CDN','Caching','Search index'],source:'Searchers',unit:'req/s',rate:50000,read:1,spike:1.5,failType:'search',
+ crit:{p99:60,err:0.5,cost:2000},need:['lb'],reach:[['search']],
+ desc:'<p>Every keystroke in the search box asks for the top suggestions for the current prefix. Suggestions are rebuilt from query logs every few minutes, so they’re effectively read-only.</p><p>Results must appear while the user is still typing, which means p99 under 60 ms at 50k requests a second.</p>',
+ hints:['Prefix results are identical for everyone typing the same prefix. How close to the user can you cache them?','Short prefixes are extremely hot. Even a modest hit rate at the edge removes most of the load.','The search index is the slowest and most expensive hop. Keep it off the common path.'],
+ sol:'<p>Searchers → CDN → load balancer → 2 API servers → cache → search index (2 replicas).</p><p>The CDN answers 92% of prefixes with a short TTL, so only about 4k req/s reach your servers. Of those, the cache answers most of the rest, and the index sees under 1k req/s. Without the CDN you’d need about 19 API servers and still miss the latency target.</p><p>Discussion points: trie vs. precomputed top-k per prefix, and how often to rebuild from logs.</p>',
+ ref:{nodes:[['client',40,220,1],['cdn',250,220,1],['lb',460,220,1],['api',670,220,2],['cache',880,220,1],['search',1090,220,2]],edges:[[0,1],[1,2],[2,3],[3,4],[4,5]]}},
+{id:'news-feed',cat:'web',title:'News feed (Twitter / X timeline)',diff:'Medium',tags:['Fan-out on write','Caching','Kafka'],source:'Users',unit:'req/s',rate:20000,read:0.95,spike:1.5,failType:'cache',
+ crit:{p99:120,err:0.5,lag:10,cost:2000},need:['queue','cache'],reach:[['nosql']],
+ desc:'<p>Users scroll their home timeline and occasionally post. Building a timeline on every read by querying everyone a user follows is too slow.</p><p>Precompute timelines: when someone posts, fan the post out to followers’ cached timelines in the background. New posts should show up within seconds.</p>',
+ hints:['Reads should hit precomputed timelines in a cache. Posts are only 5% of traffic.','Fan-out is slow and bursty work. Publish new posts to a topic and let workers write them into timelines.','Kafka topics only receive the write share of traffic, so the fan-out path is small.'],
+ sol:'<p>Users → load balancer → 10 API servers → timeline cache (2 replicas) → NoSQL. The API also publishes posts to a Kafka topic, and a worker fans each post out into the timeline cache.</p><p>The read path is load balancer, API and cache, under 100 ms p99 even at the spike. The fan-out path handles about 1.5k posts/s with no lag.</p><p>Discussion point: celebrities with millions of followers are usually pulled at read time instead of fanned out (the hybrid approach).</p>',
+ ref:{nodes:[['client',40,160,1],['lb',250,160,1],['api',460,160,10],['cache',900,160,2],['nosql',1120,160,1],['queue',460,350,1],['worker',680,350,1]],edges:[[0,1],[1,2],[2,3],[3,4],[2,5],[5,6],[6,3]]}},
+{id:'chat',cat:'web',title:'Chat system (WhatsApp / Slack)',diff:'Medium',tags:['WebSockets','Kafka','NoSQL'],source:'Chat clients',unit:'msgs/s',rate:20000,read:0,spike:1.5,failType:'ws',
+ crit:{p99:30,err:0.1,lag:5,cost:1800},need:['ws','queue'],reach:[['nosql']],
+ desc:'<p>Clients hold persistent connections and send messages to one-to-one and group chats. Senders need a fast acknowledgement; recipients need the message within a few seconds, including recipients who are offline right now.</p><p>Messages must never be lost, even when a gateway server dies.</p>',
+ hints:['HTTP request/response is a poor fit for push. Which component keeps persistent connections open?','Acknowledge once the message is durably in a log, then deliver and store it asynchronously.','Delivery workers have to keep up with the spike, or messages pile up as lag.'],
+ sol:'<p>Clients → load balancer → WebSocket gateways (3 replicas) → Kafka topic → delivery workers (5 replicas) → NoSQL message store.</p><p>The sender gets an ack after the Kafka write. Workers persist the message and push it to recipients’ gateways. Five workers read 25k msgs/s, so the 30k/s spike builds only a couple of seconds of lag.</p><p>Discussion points: per-conversation ordering via partition keys, read receipts, and presence.</p>',
+ ref:{nodes:[['client',40,220,1],['lb',250,220,1],['ws',460,220,3],['queue',670,220,1],['worker',880,220,5],['nosql',1090,220,2]],edges:[[0,1],[1,2],[2,3],[3,4],[4,5]]}},
+{id:'notifications',cat:'web',title:'Notification system',diff:'Medium',tags:['Kafka','Workers','Third-party quotas'],source:'Internal services',unit:'events/s',rate:15000,read:0,spike:2,failType:'worker',extCap:20000,
+ crit:{p99:50,err:0.1,lag:60,cost:1200},need:['queue'],reach:[['extapi']],
+ desc:'<p>Internal services ask you to send push notifications, SMS and email. Delivery goes through third-party providers (APNs, FCM, Twilio) that enforce a fixed quota of 20k sends per second. You can’t buy more.</p><p>A marketing blast doubles traffic. Nothing may be dropped; a delay of up to a minute is acceptable.</p>',
+ hints:['Anything sent above the provider quota is rejected. Something has to absorb the excess.','Workers pulling from a topic set your send rate. More workers isn’t always better.','Match your total worker throughput to the provider quota, not to peak demand.'],
+ sol:'<p>Services → Kafka topic → 4 workers → third-party API.</p><p>Four workers send at exactly the 20k/s quota. During the 30k/s blast the topic holds the excess and lag peaks around 6 seconds. With five or more workers you’d exceed the quota and get messages rejected; without a topic the blast is simply dropped.</p><p>Discussion points: retries with backoff, deduplication keys, and user preference checks.</p>',
+ ref:{nodes:[['client',40,220,1],['queue',260,220,1],['worker',480,220,4],['extapi',700,220,1]],edges:[[0,1],[1,2],[2,3]]}},
+{id:'photo-sharing',cat:'web',title:'Photo sharing (Instagram)',diff:'Medium',tags:['CDN','Object storage','Metadata'],source:'Users',unit:'req/s',rate:25000,read:0.97,spike:2,failType:'api',
+ crit:{p99:60,err:0.5,cost:1200},need:['lb'],reach:[['s3'],['sql','nosql']],
+ desc:'<p>Users browse feeds full of images and occasionally upload one. Images live in object storage; captions, likes and owners live in a database.</p><p>Keep image loads fast worldwide and hold up when a post goes viral.</p>',
+ hints:['Images are immutable. Where’s the cheapest place to serve them from?','Only CDN misses and uploads need to touch your servers.','Behind the servers, a cache can absorb repeat metadata and image reads before they hit storage.'],
+ sol:'<p>Users → CDN → load balancer → 2 API servers → cache → SQL (metadata) and object storage (images).</p><p>The CDN serves 89% of all requests at the edge, leaving about 2.7k req/s for your servers. p99 is around 20 ms. Without the CDN you need a dozen API servers and blow the budget.</p>',
+ ref:{nodes:[['client',40,220,1],['cdn',250,220,1],['lb',460,220,1],['api',670,220,2],['cache',880,220,1],['sql',1100,120,1],['s3',1100,320,1]],edges:[[0,1],[1,2],[2,3],[3,4],[4,5],[4,6]]}},
+{id:'file-sync',cat:'web',title:'File sync (Dropbox / Google Drive)',diff:'Medium',tags:['Metadata','Kafka','Object storage'],source:'Desktop clients',unit:'req/s',rate:8000,read:0.6,spike:1.5,failType:'sql',
+ crit:{p99:120,err:0.5,lag:15,cost:1700},need:['lb','queue'],reach:[['s3'],['sql','nosql']],
+ desc:'<p>Desktop clients poll for changes and upload modified file blocks. The metadata service tracks files, versions and block lists; block contents go to object storage.</p><p>Edits should reach a user’s other devices within 15 seconds, and the metadata store must survive losing a replica.</p>',
+ hints:['Metadata reads are frequent and small. Block uploads are large and can be processed asynchronously.','Kafka topics only receive the write share of traffic, so a topic is a natural home for upload processing.','The failure test takes down a SQL replica. Leave headroom.'],
+ sol:'<p>Clients → load balancer → 5 API servers → cache → SQL (3 replicas). The API publishes uploads to a Kafka topic; a worker stores blocks in object storage and notifies other devices.</p><p>SQL takes about 3.9k metadata misses/s normally and 5.9k at the spike, so three replicas keep it under 70% and survive losing one.</p><p>Discussion points: content-defined chunking, block-level dedup, and conflict resolution.</p>',
+ ref:{nodes:[['client',40,160,1],['lb',250,160,1],['api',460,160,5],['cache',680,160,1],['sql',900,160,3],['queue',680,350,1],['worker',900,350,1],['s3',1120,350,1]],edges:[[0,1],[1,2],[2,3],[3,4],[2,5],[5,6],[6,7]]}},
+{id:'web-crawler',cat:'web',title:'Web crawler',diff:'Medium',tags:['URL frontier','Workers','Object storage'],source:'URL scheduler',unit:'pages/s',rate:10000,read:0,spike:1.5,failType:'worker',
+ crit:{p99:50,err:0.1,lag:30,cost:1300},need:['queue'],reach:[['s3'],['nosql']],
+ desc:'<p>A scheduler emits URLs to crawl. Fetchers download each page, store the raw HTML for the indexing team, and record the URL with its content hash so duplicates are skipped.</p><p>Bursts happen when a big site map is discovered. Nothing may be dropped.</p>',
+ hints:['The URL frontier is a queue. It decouples discovery from fetching.','Each fetcher worker writes to two places: raw pages and a seen-URL store.','The failure test takes down a fetcher. Leave headroom.'],
+ sol:'<p>Scheduler → Kafka topic (the frontier) → 3 fetcher workers → object storage (raw HTML) and NoSQL (seen URLs and hashes, 2 replicas).</p><p>Three workers fetch 15k pages/s, which covers the burst without lag and survives losing one.</p><p>Discussion points: politeness per domain (one queue per host), robots.txt, and Bloom filters for dedup.</p>',
+ ref:{nodes:[['client',40,220,1],['queue',260,220,1],['worker',480,220,3],['s3',720,120,1],['nosql',720,320,2]],edges:[[0,1],[1,2],[2,3],[2,4]]}},
+{id:'ticket-booking',cat:'web',title:'Ticket booking flash sale (Ticketmaster)',diff:'Hard',tags:['CDN','Strong consistency','Spikes'],source:'Fans',unit:'req/s',rate:40000,read:0.95,spike:3,failType:'sql',
+ crit:{p99:80,err:0.5,cost:1500},need:['lb'],reach:[['sql']],
+ desc:'<p>A huge tour goes on sale. Fans refresh event and seat-map pages; a small share try to reserve seats. Reservations must go to a relational database so a seat can’t be sold twice.</p><p>Traffic triples the moment sales open.</p>',
+ hints:['Event pages and seat maps can be cached briefly at the edge. Only misses and reservations need your servers.','At 3× traffic, anything sized for the average melts. Do the math for 120k req/s.','The failure test kills a SQL replica. Reservations must keep working.'],
+ sol:'<p>Fans → CDN → load balancer → 5 API servers → cache → SQL (2 replicas).</p><p>The CDN absorbs 87% of traffic even at the spike, so the API tier sees about 15k req/s and SQL about 3k. Without the CDN you need around 30 API servers.</p><p>Discussion points: holding seats with a short TTL lock, a virtual waiting room, and idempotent reservation requests.</p>',
+ ref:{nodes:[['client',40,220,1],['cdn',250,220,1],['lb',460,220,1],['api',670,220,5],['cache',880,220,1],['sql',1090,220,2]],edges:[[0,1],[1,2],[2,3],[3,4],[4,5]]}},
+{id:'ride-hailing',cat:'web',title:'Ride-hailing location service (Uber)',diff:'Hard',tags:['WebSockets','Geo index','Streaming'],source:'Drivers and riders',unit:'req/s',rate:100000,read:0.1,spike:1.3,failType:'cache',
+ crit:{p99:40,err:0.5,lag:15,cost:4000},need:['ws','cache'],reach:[['cache'],['nosql']],
+ desc:'<p>Every active driver sends a location update every few seconds, and riders ask for nearby drivers. That’s 90% writes, 100k a second.</p><p>Matching needs the latest positions in memory. Location history is aggregated for ETA models.</p>',
+ hints:['App servers handle 4k req/s each. A connection-oriented gateway is far cheaper for constant updates. Check the load balancer’s capacity as well.','Keep a geo index (Redis GEO or geohash buckets) in the cache. It’s the system of record for live positions.','Updates are writes, so they flow to a Kafka topic too. Aggregate them before storing.'],
+ sol:'<p>Clients → load balancer (3 replicas) → 8 WebSocket gateways → geo cache (4 replicas), plus a Kafka topic (3 replicas) → stream processor (6) → NoSQL for location history.</p><p>A single load balancer tops out at 60k req/s, so it needs replicas too. Gateways handle 130k updates/s at peak, the cache keeps live positions, and the stream job compacts updates tenfold before they hit storage.</p>',
+ ref:{nodes:[['client',40,160,1],['lb',250,160,3],['ws',460,160,8],['cache',700,70,4],['queue',700,280,3],['stream',920,280,6],['nosql',1140,280,1]],edges:[[0,1],[1,2],[2,3],[2,4],[4,5],[5,6]]}},
+{id:'payment',cat:'web',title:'Payment processing',diff:'Hard',tags:['Ledger','Idempotency','Third-party quotas'],source:'Checkout requests',unit:'req/s',rate:3000,read:0.2,spike:2.5,failType:'sql',extCap:5000,
+ crit:{p99:200,err:0.1,lag:30,cost:1500},need:['lb','queue'],reach:[['sql'],['extapi']],
+ desc:'<p>Checkout writes a payment intent to a ledger and charges the card through a payment service provider (Stripe, Adyen). The provider takes about 200 ms per call and caps you at 5k calls a second.</p><p>Customers need a fast “payment received” response; the charge can complete moments later. A Black Friday spike is 2.5× normal.</p>',
+ hints:['Calling the provider on the request path puts 200 ms (more under load) on every checkout.','Record the intent in the ledger synchronously, then charge asynchronously.','A topic buffers the spike so you never exceed the provider quota.'],
+ sol:'<p>Checkout → load balancer → 3 API servers → SQL ledger (3 replicas), and the API publishes intents to a Kafka topic → worker → provider.</p><p>The response waits only for the ledger write. One worker sends at the 5k/s quota; the spike’s 6k writes/s build a couple of seconds of lag.</p><p>Discussion points: idempotency keys, double-entry ledgers, and reconciliation against provider reports.</p>',
+ ref:{nodes:[['client',40,160,1],['lb',250,160,1],['api',460,160,3],['sql',700,70,3],['queue',700,280,1],['worker',920,280,1],['extapi',1140,280,1]],edges:[[0,1],[1,2],[2,3],[2,4],[4,5],[5,6]]}},
+/* ===== Data engineering ===== */
+{id:'clickstream',cat:'data',title:'Clickstream ingestion into a data lake',diff:'Medium',tags:['Kafka','Streaming','Data lake'],source:'Web and app SDKs',unit:'events/s',rate:40000,read:0,spike:2,failType:'stream',
+ crit:{p99:50,err:0.1,lag:20,cost:1200},need:['queue','stream'],reach:[['s3']],
+ desc:'<p>Every page view, click and scroll from the web and mobile apps is sent as an event. A streaming job sessionizes the events and writes compacted files to the data lake, where analysts build funnels.</p><p>Producers must get a fast acknowledgement, no events can be lost, and data must land in the lake within seconds, even when a campaign doubles traffic.</p>',
+ hints:['Producers only need an acknowledgement, not a completed write to the lake. Which component acknowledges quickly and durably?','One Kafka replica takes about 50k events/s. The spike doubles traffic for 12 seconds.','Consumer lag grows whenever the stream job reads slower than events arrive. Size it so the backlog from the spike drains quickly.'],
+ sol:'<p>SDKs → Kafka (2 replicas) → stream processor (3 replicas) → object storage.</p><p>Two Kafka replicas absorb the 80k events/s spike without dropping. Three stream workers read 60k/s, so the spike builds about 4 seconds of lag, which drains once traffic settles. If a worker fails, two still keep up with steady traffic.</p><p>In production you’d also tune partitions to match consumer parallelism and use exactly-once sinks.</p>',
+ ref:{nodes:[['client',40,220,1],['queue',270,220,2],['stream',500,220,3],['s3',730,220,1]],edges:[[0,1],[1,2],[2,3]]}},
+{id:'cdc-warehouse',cat:'data',title:'CDC from OLTP into the warehouse',diff:'Medium',tags:['CDC','Debezium','Warehouse'],source:'Database change log',unit:'events/s',rate:25000,read:0,spike:2,failType:'queue',
+ crit:{p99:50,err:0.1,lag:60,cost:2000},need:['queue'],reach:[['dwh'],['s3']],
+ desc:'<p>Debezium reads the production Postgres write-ahead log and emits every insert, update and delete. Analysts want the warehouse no more than a minute behind production, and the platform team wants every raw change archived in the lake for replay.</p><p>A nightly bulk backfill doubles change volume. The warehouse’s streaming ingest tops out at 20k rows/s per replica.</p>',
+ hints:['Writing changes straight into the warehouse fails the moment volume exceeds its ingest rate.','A topic lets the warehouse loader and the raw archive consume independently.','Merging changes into current-state tables before loading reduces warehouse writes.'],
+ sol:'<p>Change log → Kafka (2 replicas). One consumer path runs a stream processor (2 replicas) that merges changes and loads the warehouse; the other archives raw changes to object storage.</p><p>The backfill builds a few seconds of lag on the merge path and none on the archive path. Losing a broker leaves one replica to carry 25k events/s.</p><p>Discussion points: schema evolution, ordering per primary key, and handling deletes (soft deletes or MERGE).</p>',
+ ref:{nodes:[['client',40,220,1],['queue',270,220,2],['stream',500,120,2],['dwh',730,120,1],['s3',500,330,1]],edges:[[0,1],[1,2],[2,3],[1,4]]}},
+{id:'fraud-scoring',cat:'data',title:'Real-time fraud scoring',diff:'Medium',tags:['Feature store','Async analytics','Kafka'],source:'Payment requests',unit:'req/s',rate:6000,read:0,spike:1.5,failType:'nosql',
+ crit:{p99:150,err:0.5,lag:30,cost:2000},need:['lb','queue'],reach:[['nosql'],['dwh']],
+ desc:'<p>Each card payment is scored before approval. The API reads features for the card and merchant from a low-latency online feature store, returns a decision, and publishes the payment so analysts can study fraud patterns in the warehouse.</p><p>Approval latency is customer-facing. Analytics can run a little behind, but not by much.</p>',
+ hints:['The approval path should only touch what the decision needs. Analytics can happen after the response.','Writing straight to the warehouse puts an 80 ms hop, slower under load, on every approval.','The failure test takes down a NoSQL replica. Feature lookups can’t stop.'],
+ sol:'<p>Payments → load balancer → 3 API servers. Each API server calls a NoSQL feature store (2 replicas) and publishes to a Kafka topic. A stream processor consumes the topic and writes aggregates to the warehouse.</p><p>The synchronous path is load balancer, API and NoSQL, about 44 ms average at the spike. Kafka acknowledges in a few ms, so the warehouse never sits on the approval path.</p>',
+ ref:{nodes:[['client',40,160,1],['lb',250,160,1],['api',460,160,3],['nosql',700,70,2],['queue',700,260,1],['stream',920,260,1],['dwh',1140,260,1]],edges:[[0,1],[1,2],[2,3],[2,4],[4,5],[5,6]]}},
+{id:'log-aggregation',cat:'data',title:'Centralized log aggregation (ELK)',diff:'Medium',tags:['Kafka','Search index','Retention'],source:'App servers',unit:'lines/s',rate:60000,read:0,spike:2,failType:'search',
+ crit:{p99:50,err:0.1,lag:30,cost:2500},need:['queue'],reach:[['search'],['s3']],
+ desc:'<p>Thousands of servers ship log lines. Engineers search recent warnings and errors interactively; compliance requires every raw line kept for a year.</p><p>Incidents double log volume exactly when people need search the most, and a search node can fail at the same time.</p>',
+ hints:['Indexing every line in the search cluster is very expensive. Does everything need to be searchable?','A stream job can parse, filter and enrich lines so only the useful fraction gets indexed.','Raw lines can go straight from the topic to cheap object storage.'],
+ sol:'<p>App servers → Kafka (3 replicas). A stream processor (3) parses lines and indexes the useful 10% into the search cluster (2 replicas); a second consumer archives everything to object storage.</p><p>The incident spike builds about 12 seconds of indexing lag, which drains afterwards. Indexing everything would need eight or more search nodes.</p>',
+ ref:{nodes:[['client',40,220,1],['queue',270,220,3],['stream',500,120,3],['search',730,120,2],['s3',500,330,1]],edges:[[0,1],[1,2],[2,3],[1,4]]}},
+{id:'metrics-monitoring',cat:'data',title:'Metrics monitoring (Datadog / Prometheus)',diff:'Hard',tags:['Time series','Kafka','Hot and cold storage'],source:'Hosts and agents',unit:'points/s',rate:200000,read:0,spike:1.5,failType:'tsdb',
+ crit:{p99:30,err:0.1,lag:10,cost:3200},need:['queue'],reach:[['tsdb'],['s3']],
+ desc:'<p>Agents on every host push CPU, memory and custom metrics. Dashboards and alerts read recent data from a time-series database; older data is rolled up into the lake.</p><p>Dashboards must be under 10 seconds behind. A TSDB node can fail at any time.</p>',
+ hints:['200k points/s straight into the TSDB leaves no room for a spike or a failure.','A topic in front lets the TSDB ingest at its own pace while agents get fast acks.','Size the TSDB so a lost node only creates a little lag, not an outage.'],
+ sol:'<p>Agents → Kafka (7 replicas) → TSDB (4 replicas), with a second consumer archiving to object storage (2 replicas).</p><p>Four TSDB nodes ingest 240k points/s. The spike builds about 3 seconds of lag; losing a node drops ingest to 180k/s, and lag grows to about 4 seconds over the rest of the test.</p><p>Discussion points: downsampling, cardinality limits, and pull vs. push collection.</p>',
+ ref:{nodes:[['client',40,220,1],['queue',270,220,7],['tsdb',510,120,4],['s3',510,330,2]],edges:[[0,1],[1,2],[1,3]]}},
+{id:'ad-click-aggregation',cat:'data',title:'Ad click aggregation',diff:'Hard',tags:['Streaming','Exactly-once','Warehouse'],source:'Ad servers',unit:'clicks/s',rate:100000,read:0,spike:2,failType:'stream',
+ crit:{p99:30,err:0.1,lag:15,cost:3000},need:['queue','stream'],reach:[['nosql'],['dwh'],['s3']],
+ desc:'<p>Every ad click is logged. Advertisers see per-ad click counts per minute in their dashboard; finance needs the same aggregates in the warehouse for billing; raw clicks are kept for audits and recomputation.</p><p>A viral campaign doubles clicks. Counts must stay under 15 seconds behind.</p>',
+ hints:['Aggregate per ad per minute in a stream job; the output is a small fraction of input.','The same aggregates feed two sinks: a fast serving store and the warehouse.','Raw clicks bypass the stream job and go straight to the lake.'],
+ sol:'<p>Ad servers → Kafka (5 replicas) → stream processor (6) → NoSQL for dashboards and the warehouse for billing. A second consumer archives raw clicks to object storage (2).</p><p>Six stream workers read 120k/s; the 200k/s spike builds about 8 seconds of lag. Losing a worker leaves exactly enough for steady traffic.</p><p>Discussion points: exactly-once with transactional sinks, late events and watermarks, and reconciling streaming counts with a batch recompute.</p>',
+ ref:{nodes:[['client',40,220,1],['queue',270,220,5],['stream',500,120,6],['nosql',740,50,1],['dwh',740,200,1],['s3',500,340,2]],edges:[[0,1],[1,2],[2,3],[2,4],[1,5]]}},
+{id:'iot-telemetry',cat:'data',title:'IoT telemetry with hot and cold paths',diff:'Hard',tags:['Kappa architecture','Kafka','Streaming'],source:'Devices',unit:'events/s',rate:150000,read:0,spike:1.5,failType:'queue',
+ crit:{p99:40,err:0.1,lag:15,cost:3500},need:['queue','stream'],reach:[['nosql'],['s3']],
+ desc:'<p>A fleet of sensors reports every few seconds. Operations needs live per-device aggregates in a serving store for dashboards. Data science needs every raw event archived in the lake for model training.</p><p>A firmware rollout causes a 1.5× surge, and a broker can fail at any time.</p>',
+ hints:['Every consumer of a Kafka topic receives the full stream. One topic can feed both paths.','Raw events can go straight from the topic to object storage. Only the hot path needs a stream processor.','During the surge the stream job’s output grows too. Check the serving store’s headroom.'],
+ sol:'<p>Devices → Kafka (5 replicas). The topic feeds two consumers: a stream processor (8 replicas) writing aggregates to NoSQL (2 replicas), and object storage (2 replicas) archiving raw events.</p><p>Five brokers carry the 225k events/s surge; after a failure, four still carry the steady 150k. Eight stream workers read 160k/s, so the surge builds about 5 seconds of lag. Aggregates are about 10% of input, so the serving store needs two replicas to avoid drops.</p>',
+ ref:{nodes:[['client',40,220,1],['queue',270,220,5],['stream',510,120,8],['nosql',750,120,2],['s3',510,330,2]],edges:[[0,1],[1,2],[2,3],[1,4]]}}
+];
+
+/* ---------- Storage ---------- */
+const store = {
+  get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},
+  set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}
+};
+const solved = () => store.get('loadline:solved',{});
+const INTERVIEW_SECONDS=45*60;
+function loadInterview(p){
+  const saved=store.get('loadline:interview:'+p.id,null)||{};
+  return {step:Number.isInteger(saved.step)?Math.max(0,Math.min(4,saved.step)):0,done:saved.done&&typeof saved.done==='object'?saved.done:{},notes:saved.notes&&typeof saved.notes==='object'?saved.notes:{},remaining:Number.isFinite(saved.remaining)?Math.max(0,Math.min(INTERVIEW_SECONDS,saved.remaining)):INTERVIEW_SECONDS,started:false,lastStart:0};
+}
+function saveInterview(){if(prob) store.set('loadline:interview:'+prob.id,{step:interview.step,done:interview.done,notes:interview.notes,remaining:interview.remaining});}
+
+/* ---------- Helpers ---------- */
+const $ = (s,r=document)=>r.querySelector(s);
+const esc = s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function fmt(n){ if(!isFinite(n)) return '∞'; if(n>=1e6) return (n/1e6).toFixed(1)+'M'; if(n>=1e4) return Math.round(n/1e3)+'k'; if(n>=1e3) return (n/1e3).toFixed(1)+'k'; return String(Math.round(n)); }
+const money = n=>'$'+Math.round(n).toLocaleString('en-US');
+let uid=1; const newId = p=>(p||'n')+Date.now().toString(36)+(uid++);
+const W=158, H=66;
+const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* ---------- Simulation ---------- */
+function analyze(d){
+  const byId={},kids={},parents={};
+  d.nodes.forEach(n=>{byId[n.id]=n;kids[n.id]=[];parents[n.id]=[]});
+  d.edges.forEach(e=>{if(byId[e.from]&&byId[e.to]){kids[e.from].push(e.to);parents[e.to].push(e.from)}});
+  const reach=new Set(), stack=['client'];
+  while(stack.length){const x=stack.pop(); if(reach.has(x)||!byId[x])continue; reach.add(x); kids[x].forEach(k=>stack.push(k));}
+  const indeg={}; reach.forEach(id=>indeg[id]=parents[id].filter(p=>reach.has(p)).length);
+  const q=[...reach].filter(id=>indeg[id]===0), order=[];
+  while(q.length){const x=q.shift(); order.push(x); kids[x].forEach(k=>{if(--indeg[k]===0)q.push(k)})}
+  return {byId,kids,order,reach};
+}
+function latEff(lat,u){ if(!isFinite(u)) return lat*10; if(u<1) return lat*(1+2*u*u*u); return lat*(3+5*Math.min(u-1,1)); }
+function baseCap(type,p){ return type==='extapi'?((p&&p.extCap)||C.extapi.cap):C[type].cap; }
+function capOf(n,fails,p){ return n.type==='client'?Infinity:baseCap(n.type,p)*Math.max(0,n.rep-(fails[n.id]||0)); }
+const avg = a=>a.reduce((s,x)=>s+x,0)/a.length;
+
+function step(d,p,st,rate,fails,dt){
+  const {byId,kids,order}=analyze(d);
+  const inR={}, ns={}, er={};
+  order.forEach(id=>inR[id]=0);
+  inR.client=rate;
+  st.bl=st.bl||{};
+  let maxLag=0;
+  for(const id of order){
+    const n=byId[id], c=C[n.type], ks=kids[id], inn=inR[id];
+    const cap=capOf(n,fails,p);
+    const served=Math.min(inn,cap);
+    const u = n.type==='client'?0:(cap>0?inn/cap:(inn>0?Infinity:0));
+    const s={in:inn,served,drop:inn-served,u,cap,lag:0,alive:n.type==='client'?1:Math.max(0,n.rep-(fails[id]||0))};
+    if(n.type==='queue'){
+      let lag=0;
+      for(const k of ks){
+        const key=id+'>'+k, kc=capOf(byId[k],fails,p);
+        const avail=served*dt+(st.bl[key]||0);
+        const o=Math.min(avail/dt,kc);
+        st.bl[key]=Math.max(0,avail-o*dt);
+        inR[k]+=o; er[key]=o;
+        lag=Math.max(lag,st.bl[key]/Math.max(o,1));
+      }
+      s.lag=lag; maxLag=Math.max(maxLag,lag);
+    } else {
+      let out=served;
+      if(c.hit) out*= (1-p.read*c.hit);
+      if(c.ratio) out*=c.ratio;
+      if(c.filter) out*=(1-(p.abuse||0));
+      const share = n.type==='lb'&&ks.length ? out/ks.length : out;
+      for(const k of ks){ const v = byId[k].type==='queue' ? share*(1-p.read) : share; inR[k]+=v; er[id+'>'+k]=v; }
+    }
+    ns[id]=s;
+  }
+  for(const id of [...order].reverse()){
+    const n=byId[id], c=C[n.type], s=ns[id], ks=kids[id];
+    const le = n.type==='client'?0:latEff(c.lat,s.u);
+    const sf = s.in>0 ? s.served/s.in : 1;
+    const cE=ks.map(k=>ns[k].E), cS=ks.map(k=>ns[k].S);
+    let E,S;
+    if(n.type==='client'){ E=ks.length?Math.max(...cE):0; S=ks.length?Math.min(...cS):0; }
+    else if(n.type==='lb'){ E=le+(ks.length?avg(cE):0); S=sf*(ks.length?avg(cS):1); }
+    else if(n.type==='queue'){ E=le; S=sf*(ks.length?Math.min(...cS):1); }
+    else { const miss=c.hit?1-p.read*c.hit:(c.filter?1-(p.abuse||0):1); E=le+miss*(ks.length?Math.max(...cE):0); S=sf*((1-miss)+miss*(ks.length?Math.min(...cS):1)); }
+    s.E=E; s.S=S;
+  }
+  const root=ns.client;
+  return {ns,er,p99:root.E*2.3,err:(1-root.S)*100,thr:rate*root.S,lag:maxLag,rate};
+}
+function designCost(d){ return d.nodes.reduce((s,n)=>s+(n.type==='client'?0:C[n.type].cost*n.rep),0); }
+
+function validate(d,p){
+  const issues=[], a=analyze(d);
+  if(!a.kids.client.length) issues.push(`Connect ${p.source} to the first component of your design.`);
+  for(const t of p.need) if(!d.nodes.some(n=>n.type===t)){
+    const why={lb:'Put one in front of your API servers so traffic is spread across replicas.',queue:'This problem needs a durable buffer between producers and processing.',stream:'Events need to be processed continuously, not stored raw only.'}[t]||'';
+    issues.push(`Add a ${C[t].name.toLowerCase()}. ${why}`);
+  }
+  for(const g of p.reach) if(![...a.reach].some(id=>g.includes(a.byId[id].type)))
+    issues.push(`Traffic never reaches ${g.map(t=>'a '+C[t].name.toLowerCase()).join(' or ')}. Connect one so the data lands where it needs to.`);
+  const failNodes=d.nodes.filter(n=>n.type===p.failType&&a.reach.has(n.id));
+  if(!failNodes.length) issues.push(`Connect a ${C[p.failType].name.toLowerCase()} to the traffic path. The failure test takes one of its replicas offline.`);
+  else if(failNodes.reduce((sum,n)=>sum+n.rep,0)<2) issues.push(`Add a second ${C[p.failType].name.toLowerCase()} replica so the design can stay available when one fails.`);
+  return issues;
+}
+function scenarioTests(p){
+  return [
+    {kind:'steady',name:'Steady load',info:`${fmt(p.rate)} ${p.unit} for 60 s`},
+    {kind:'spike',name:`Traffic spike ×${p.spike}`,info:`${fmt(p.rate*p.spike)} ${p.unit} from 20 s to 32 s`},
+    {kind:'fail',name:`${C[p.failType].name} replica fails`,info:`One ${C[p.failType].name.toLowerCase()} replica goes down at 20 s`}
+  ];
+}
+function runTest(d,p,kind){
+  const st={}, dt=0.25, latencies=[]; let errW=0,rateSum=0,maxLag=0,thrSum=0,bottleneck=null,samples=0;
+  const graph=analyze(d);
+  const candidates=d.nodes.filter(n=>n.type===p.failType&&graph.reach.has(n.id));
+  const target=candidates.find(n=>n.rep>1)||candidates[0];
+  for(let t=0;t<60;t+=dt){
+    const rate=p.rate*(kind==='spike'&&t>=20&&t<32?p.spike:1);
+    const fails=(kind==='fail'&&t>=20&&target)?{[target.id]:1}:{};
+    const r=step(d,p,st,rate,fails,dt);
+    if(t>=2){
+      latencies.push(r.p99); samples++;
+      for(const [id,s] of Object.entries(r.ns)){
+        const n=d.nodes.find(x=>x.id===id);
+        if(n&&n.type!=='client'&&s.u>(bottleneck?.util||0)) bottleneck={type:n.type,name:C[n.type].name,util:s.u,rep:n.rep};
+      }
+    }
+    errW+=r.err*rate; rateSum+=rate; thrSum+=r.thr; maxLag=Math.max(maxLag,r.lag);
+  }
+  latencies.sort((a,b)=>a-b);
+  const p99=latencies[Math.max(0,Math.ceil(latencies.length*0.99)-1)]||0;
+  const err=errW/rateSum;
+  const res={p99,err,lag:maxLag,throughput:samples?thrSum/(60/dt):0,bottleneck};
+  res.fails=[];
+  if(p99>p.crit.p99) res.fails.push('p99');
+  if(err>p.crit.err) res.fails.push('err');
+  if(p.crit.lag!=null && maxLag>p.crit.lag) res.fails.push('lag');
+  res.pass=!res.fails.length;
+  return res;
+}
+
+/* ---------- State ---------- */
+let prob=null, design=null, sel=null, ltab='interview', ctab='live', prevDesign=null;
+const INTERVIEW_STAGES=[
+  {id:'clarify',label:'Clarify'},
+  {id:'estimate',label:'Estimate'},
+  {id:'design',label:'Design'},
+  {id:'scale',label:'Scale & fail'},
+  {id:'debrief',label:'Debrief'}
+];
+let interview={step:0,done:{},notes:{},remaining:2700,started:false,lastStart:0};
+const live={running:false,t:0,st:{},fails:{},mult:1,stats:null,hist:[],acc:0,histAcc:0};
+const edgeEls={}; const nodeEls={};
+
+function blankDesign(){return {nodes:[{id:'client',type:'client',x:40,y:220,rep:1}],edges:[]}}
+function loadDesign(p){const d=store.get('loadline:design:'+p.id,null); return d&&Array.isArray(d.nodes)&&d.nodes.some(n=>n.id==='client')?d:blankDesign();}
+let saveT=null;
+function saveDesign(){ clearTimeout(saveT); saveT=setTimeout(()=>{ if(prob) store.set('loadline:design:'+prob.id,design); },200); }
+function refToDesign(ref){
+  const nodes=ref.nodes.map((r,i)=>({id:i===0?'client':newId('r'),type:r[0],x:r[1],y:r[2],rep:r[3]}));
+  return {nodes,edges:ref.edges.map(([a,b])=>({id:newId('e'),from:nodes[a].id,to:nodes[b].id}))};
+}
+
+/* ---------- Routing ---------- */
+function route(){
+  const id=location.hash.slice(1);
+  const p=P.find(x=>x.id===id);
+  if(p) openProblem(p); else showHome();
+}
+window.addEventListener('hashchange',route);
+$('#brand').onclick=()=>{ location.hash='problems'; };
+
+function showHome(){
+  pauseInterviewTimer(); stopLive(); prob=null;
+  $('#home').hidden=false; $('#workspace').hidden=true; $('#wsActions').hidden=true; $('#sessionControls').hidden=true; $('#crumb').innerHTML='';
+ renderList();
+}
+const filt={q:'',cat:'all',diff:'all'};
+$('#q').addEventListener('input',e=>{filt.q=e.target.value.trim().toLowerCase(); renderList();});
+['fCat','fDiff'].forEach(id=>$('#'+id).addEventListener('click',e=>{const b=e.target.closest('button'); if(!b) return; $('#'+id).querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',x===b)); filt[id==='fCat'?'cat':'diff']=b.dataset.v; renderList();}));
+const CATS={web:'Web and product',data:'Data engineering'};
+const STAGE_PROMPTS={
+  clarify:{title:'Clarify the problem',time:'5 min',prompt:'Think aloud before proposing a system. Ask who uses it, what the core actions are, what must be fast or durable, and what is out of scope.',checks:['Name the primary user and their key action.','Separate functional requirements from quality goals.','Ask about consistency, availability, and retention where they matter.']},
+  estimate:{title:'Estimate the scale',time:'5 min',prompt:'State assumptions, do the arithmetic out loud, and keep the estimate tied to a design decision. The figures below are the interviewer’s starting constraints.',checks:['Estimate peak traffic and the read/write split.','Choose an event or object size and estimate daily storage.','Use the estimate to identify the first capacity constraint.']},
+  design:{title:'Draw the first design',time:'20 min',prompt:'Start with the simplest end-to-end path. Explain each box, the data it owns, and why a request crosses that boundary.',checks:['Cover the critical request or event path from producer to storage.','Name the API boundary and the primary data model.','Explain one important choice and one alternative you rejected.']},
+  scale:{title:'Scale and handle failure',time:'10 min',prompt:'Walk through the spike and failure scenarios. Use the simulator to find a bottleneck, then explain recovery, backpressure, and what the user experiences.',checks:['Run the steady, spike, and replica-failure scenarios.','Call out the first constrained tier and the evidence for it.','Explain retries, overload behavior, and recovery after an outage.']},
+  debrief:{title:'Debrief your design',time:'5 min',prompt:'Finish like a real interview: summarize the design, state the tradeoffs, and name the next risks you would investigate with more time.',checks:['Summarize the architecture in under a minute.','Name a consistency or durability guarantee precisely.','Identify one unresolved risk and how you would validate it.']}
+};
+function renderSessionClock(){
+  const seconds=Math.max(0,Math.ceil(interview.remaining)),mm=String(Math.floor(seconds/60)).padStart(2,'0'),ss=String(seconds%60).padStart(2,'0');
+  const clock=$('#sessionClock'); if(!clock) return;
+  clock.textContent=`${mm}:${ss}`; clock.classList.toggle('running',interview.started);
+  $('#sessionToggle').textContent=interview.started?'Pause':seconds===0?'Restart round':interview.remaining<INTERVIEW_SECONDS?'Resume':'Start interview';
+}
+function timerTick(){
+  if(!prob||!interview.started) return;
+  const now=Date.now(),elapsed=Math.floor((now-interview.lastStart)/1000);
+  if(elapsed<1) return;
+  interview.remaining=Math.max(0,interview.remaining-elapsed); interview.lastStart+=elapsed*1000;
+  if(interview.remaining===0) interview.started=false;
+  saveInterview(); renderSessionClock();
+}
+function pauseInterviewTimer(){
+  if(!interview.started) return;
+  const elapsed=Math.floor((Date.now()-interview.lastStart)/1000);
+  interview.remaining=Math.max(0,interview.remaining-elapsed); interview.started=false; interview.lastStart=0;
+  saveInterview(); renderSessionClock();
+}
+$('#sessionToggle').addEventListener('click',()=>{
+  if(interview.started){pauseInterviewTimer();return;}
+  if(interview.remaining<=0) interview.remaining=INTERVIEW_SECONDS;
+  interview.started=true; interview.lastStart=Date.now(); saveInterview(); renderSessionClock(); setLTab('interview');
+});
+$('#sessionReset').addEventListener('click',()=>{interview.remaining=INTERVIEW_SECONDS;interview.started=false;interview.lastStart=0;saveInterview();renderSessionClock();});
+setInterval(timerTick,1000);
+
+function renderInterview(){
+  const p=prob,stage=INTERVIEW_STAGES[interview.step],guide=STAGE_PROMPTS[stage.id];
+  const read=p.rate*(p.read||0),write=p.rate-read,peak=p.rate*p.spike;
+  const rail=INTERVIEW_STAGES.map((s,i)=>`<button type="button" data-stage="${i}" class="${interview.done[s.id]?'done':''}" aria-current="${i===interview.step?'step':'false'}" aria-label="${s.label}${interview.done[s.id]?', complete':''}">${interview.done[s.id]?'✓ ':''}${s.label}</button>`).join('');
+  let body='';
+  if(stage.id==='clarify') body=`<div class="brief-copy">${p.desc}</div><h3>Questions to ask</h3><ul class="interview-checks">${guide.checks.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>`;
+  if(stage.id==='estimate') body=`<p>Say the assumptions before you calculate. Use these given values as anchors, then estimate payload size, daily volume, retention, and growth out loud.</p>
+    <div class="estimate-grid"><div class="estimate"><span>Steady input</span><b class="mono">${fmt(p.rate)} ${esc(p.unit)}</b></div><div class="estimate"><span>Peak input · ×${p.spike}</span><b class="mono">${fmt(peak)} ${esc(p.unit)}</b></div><div class="estimate"><span>Read share</span><b class="mono">${Math.round((p.read||0)*100)}% · ${fmt(read)} ${esc(p.unit)}</b></div><div class="estimate"><span>Write share</span><b class="mono">${Math.round((1-(p.read||0))*100)}% · ${fmt(write)} ${esc(p.unit)}</b></div><div class="estimate"><span>Latency target</span><b class="mono">p99 ≤ ${p.crit.p99} ms</b></div><div class="estimate"><span>Monthly budget</span><b class="mono">${money(p.crit.cost)}</b></div></div>
+    <ul class="interview-checks">${guide.checks.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>`;
+  if(stage.id==='design') body=`<p>Build a first-pass architecture on the canvas. Start with one request or event and follow it to its durable destination; add branches only when the product needs them.</p><ul class="interview-checks">${guide.checks.map(x=>`<li>${esc(x)}</li>`).join('')}</ul><p class="note">In a real interview, narrate the API, data model, partition key, consistency choice, and what happens when a dependency is slow.</p>`;
+  if(stage.id==='scale') body=`<ul class="interview-checks">${guide.checks.map(x=>`<li>${esc(x)}</li>`).join('')}</ul><div class="interview-prompt"><b>Scenario to defend</b><p>${esc(scenarioTests(p).map(x=>`${x.name}: ${x.info}`).join(' · '))}</p></div><p class="note">Run the tests with <b>Submit</b>. Use the utilization and latency results as evidence, then explain what the simplified model leaves out.</p>`;
+  if(stage.id==='debrief') body=`<ul class="interview-checks">${guide.checks.map(x=>`<li>${esc(x)}</li>`).join('')}</ul><p class="note">Compare your proposal with the reference only after you have written your own summary.</p><details class="ref-reveal"><summary>Reveal one reference approach</summary><div class="ref-body">${p.sol}</div></details>`;
+  const complete=!!interview.done[stage.id],note=interview.notes[stage.id]||'';
+  $('#lcontent').innerHTML=`<section class="interview" aria-labelledby="interviewTitle"><div class="interview-kicker"><span>45-minute interview</span><span>${guide.time} suggested</span></div><h2 id="interviewTitle" tabindex="-1">${guide.title}</h2><div class="stage-rail" role="group" aria-label="Interview stages">${rail}</div><div class="interview-prompt"><b>Interviewer prompt</b><p>${guide.prompt}</p></div>${body}<h3>Your notes</h3><textarea id="stageNotes" aria-label="Notes for ${guide.title}" placeholder="Write assumptions, decisions, calculations, and tradeoffs…">${esc(note)}</textarea><div class="interview-actions"><button class="btn small" id="stageDone" aria-pressed="${complete}">${complete?'Stage complete':'Mark stage complete'}</button><span class="note" id="noteStatus" aria-live="polite">Saved in this browser</span><span class="spacer"></span><button class="btn small" id="stageNext" ${interview.step===4&&complete?'disabled':''}>${interview.step===4?(complete?'Round complete':'Finish debrief'):'Continue →'}</button></div></section>`;
+  $('#stageNotes').addEventListener('input',e=>{interview.notes[stage.id]=e.target.value;saveInterview();$('#noteStatus').textContent='Saved locally';});
+  $('#stageDone').addEventListener('click',()=>{interview.done[stage.id]=!interview.done[stage.id];saveInterview();renderInterview();$('#stageDone').focus();});
+  $('#stageNext').addEventListener('click',()=>{if(interview.step<4){setInterviewStage(interview.step+1);}else{interview.done.debrief=true;pauseInterviewTimer();saveInterview();renderInterview();$('#stageNext').focus();toast('Debrief saved.');}});
+  $('#lcontent').querySelectorAll('[data-stage]').forEach(b=>b.addEventListener('click',()=>setInterviewStage(Number(b.dataset.stage))));
+}
+function setInterviewStage(i){interview.step=Math.max(0,Math.min(4,i));saveInterview();renderInterview();$('#lcontent').scrollTop=0;$('#interviewTitle').focus();}
+function renderList(){
+  const s=solved();
+  const row=p=>`<a class="prow" role="listitem" href="#${p.id}">
+    <span class="check ${s[p.id]?'done':''}" aria-label="${s[p.id]?'Solved':'Not solved'}">${s[p.id]?'<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M2.5 6.2l2.3 2.3 4.7-5"/></svg>':''}</span>
+    <span><span class="pt">${esc(p.title)}</span><span class="tags">${p.tags.map(esc).join(', ')}</span></span>
+    <span class="diff ${p.diff}">${p.diff}</span></a>`;
+  const match=p=>(filt.cat==='all'||p.cat===filt.cat)&&(filt.diff==='all'||p.diff===filt.diff)&&(!filt.q||(p.title+' '+p.tags.join(' ')).toLowerCase().includes(filt.q));
+  let html='';
+  for(const c of ['web','data']){ const list=P.filter(p=>p.cat===c&&match(p)); if(list.length) html+=`<div class="group">${CATS[c]} <span class="mono">(${list.length})</span></div>`+list.map(row).join(''); }
+  $('#plist').innerHTML=html||'<div class="noresults">No problems match. Clear the search or pick another filter.</div>';
+  const n=P.filter(p=>s[p.id]).length;
+  $('#prog').innerHTML=`${n} <small>of ${P.length} solved</small>`;
+  document.title='Loadline: system design practice';
+}
+
+function openProblem(p){
+  if(prob&&prob.id!==p.id) pauseInterviewTimer();
+  stopLive();
+  if(typeof endConnectMode==='function') endConnectMode();
+  prob=p; design=loadDesign(p); interview=loadInterview(p); sel=null; prevDesign=null; live.mult=1; $('#mult').value=1;
+  $('#home').hidden=true; $('#workspace').hidden=false; $('#wsActions').hidden=false; $('#wsActions').style.display='flex';
+  $('#sessionControls').hidden=false;
+  $('#crumb').innerHTML=`<b>${esc(p.title)}</b>`;
+  document.title=p.title+' · Loadline';
+  setLTab('interview'); setCTab('live'); renderSessionClock();
+  $('#cRes').innerHTML='<p class="idle">Submit runs three 60-second tests against your design: steady load, a traffic spike and a replica failure. Every test has to meet the targets, and the design has to fit the monthly budget.</p>';
+  renderGraph(); renderInspector(); updateCost(); buildCharts(); resetLive(); updateMultLbl();
+  requestAnimationFrame(fitView);
+}
+
+/* ---------- Left pane ---------- */
+$('#ltabs').addEventListener('click',e=>{const t=e.target.closest('[data-tab]'); if(t) setLTab(t.dataset.tab);});
+function setLTab(t){
+  ltab=t; document.querySelectorAll('#ltabs .tab').forEach(b=>b.setAttribute('aria-selected',b.dataset.tab===t));
+  const p=prob, el=$('#lcontent');
+  if(t==='interview'){
+    renderInterview();
+  } else if(t==='desc'){
+    el.innerHTML=`<h2>${esc(p.title)}</h2>
+    <div class="meta"><span class="diff ${p.diff}">${p.diff}</span><span class="pill">${CATS[p.cat]}</span>${p.tags.map(x=>`<span class="pill">${esc(x)}</span>`).join('')}</div>
+    ${p.desc}
+    <h3>Requirements</h3>
+    <table class="req"><tbody>
+      <tr><td>Traffic from ${esc(p.source.toLowerCase())}</td><td class="mono">${fmt(p.rate)} ${p.unit}</td></tr>
+      ${p.read>0?`<tr><td>Reads</td><td class="mono">${Math.round(p.read*100)}%</td></tr>`:''}
+      ${p.abuse?`<tr><td>Over-quota (abusive) traffic</td><td class="mono">${Math.round(p.abuse*100)}%</td></tr>`:''}
+      ${p.extCap?`<tr><td>Third-party API quota</td><td class="mono">${fmt(p.extCap)}/s</td></tr>`:''}
+      <tr><td>${p.crit.lag!=null?'Acknowledgement':'Response'} latency, p99</td><td class="mono">≤ ${p.crit.p99} ms</td></tr>
+      <tr><td>${p.unit==='events/s'?'Lost or rejected events':'Failed requests'}</td><td class="mono">≤ ${p.crit.err}%</td></tr>
+      ${p.crit.lag!=null?`<tr><td>Pipeline lag at any point</td><td class="mono">≤ ${p.crit.lag} s</td></tr>`:''}
+      <tr><td>Monthly budget</td><td class="mono">≤ ${money(p.crit.cost)}</td></tr>
+    </tbody></table>
+    <h3>Tests on submit</h3>
+    <ul>${scenarioTests(p).map(x=>`<li><b>${esc(x.name)}</b>: ${esc(x.info)}</li>`).join('')}</ul>
+    <h3>How the simulator models it</h3>
+    <p class="note">Each component has a capacity per replica, a base latency and a monthly cost; click one on the canvas to see them. Latency rises sharply above about 75% utilization, and anything over capacity is dropped. Load balancers split traffic; every other component sends each request to everything connected after it. Kafka topics only receive writes, and they buffer instead of dropping, which shows up as lag.</p>`;
+  } else if(t==='hints'){
+    el.innerHTML=`<h2>Hints</h2><p class="note">Open them one at a time.</p>`+p.hints.map((h,i)=>`<details class="hint"><summary>Hint ${i+1}</summary><p>${esc(h)}</p></details>`).join('');
+  } else if(t==='diagram'){
+    el.innerHTML=`<h2>Solution diagram</h2><p class="note">The reference architecture, with the traffic each connection carries and how loaded each component is at normal load.</p><div class="dgwrap">${refDiagram(p,'dg-ar')}</div>
+      <p class="note mono">${money(designCost(refToDesign(p.ref)))} per month</p>
+      <div class="irow"><button class="btn" id="dgBig">View larger</button><button class="btn" id="dgLoad">Load into canvas</button></div>`;
+    $('#dgBig').onclick=()=>{
+      const o=document.createElement('div'); o.className='dg-overlay'; o.setAttribute('role','dialog'); o.setAttribute('aria-label','Solution diagram');
+      o.innerHTML=`<div class="dgwrap">${refDiagram(p,'dg-ar2')}</div><button class="btn dg-close">Close</button>`;
+      const close=()=>{ o.remove(); document.removeEventListener('keydown',onKey); };
+      const onKey=e=>{ if(e.key==='Escape') close(); };
+      o.onclick=e=>{ if(e.target===o||e.target.closest('.dg-close')) close(); };
+      document.addEventListener('keydown',onKey); document.body.appendChild(o); o.querySelector('.dg-close').focus();
+    };
+    $('#dgLoad').onclick=()=>{ prevDesign=JSON.parse(JSON.stringify(design)); design=refToDesign(p.ref); afterDesignChange(); toast('Loaded the reference design. Restore yours from the Solution tab.'); };
+  } else if(t==='sol'){
+    el.innerHTML=`<h2>Reference solution</h2><p class="note">One design that passes. Others can too; try beating its cost.</p>${p.sol}
+      <p class="note mono">Cost of this design: ${money(designCost(refToDesign(p.ref)))} per month</p>
+      <div class="irow"><button class="btn" id="loadRef">Replace my design with this one</button>${prevDesign?'<button class="btn" id="restore">Restore my design</button>':''}</div>`;
+    $('#loadRef').onclick=()=>{ prevDesign=JSON.parse(JSON.stringify(design)); design=refToDesign(p.ref); afterDesignChange(); setLTab('sol'); toast('Loaded the reference design.'); };
+    const r=$('#restore'); if(r) r.onclick=()=>{ design=prevDesign; prevDesign=null; afterDesignChange(); setLTab('sol'); toast('Restored your design.'); };
+  } else {
+    const subs=store.get('loadline:subs:'+p.id,[]);
+    el.innerHTML=`<h2>Submissions</h2>`+(subs.length?subs.slice().reverse().map(s=>`<div class="subrow"><span>${new Date(s.at).toLocaleString()}</span><span class="${s.ok?'okt':'hott'}">${s.ok?'Accepted':'Not accepted'}</span><span class="mono">${money(s.cost)}</span></div>`).join(''):'<p class="note">No submissions yet. Build a design and press Submit.</p>');
+  }
+}
+function refDiagram(p,mid){
+  const d=refToDesign(p.ref), r=step(d,p,{},p.rate,{},1);
+  const byId={}; d.nodes.forEach(n=>byId[n.id]=n);
+  const xs=d.nodes.map(n=>n.x), ys=d.nodes.map(n=>n.y);
+  const minX=Math.min(...xs)-20, minY=Math.min(...ys)-24, maxX=Math.max(...xs)+W+20, maxY=Math.max(...ys)+H+24;
+  let edges='', labels='', nodes='';
+  for(const e of d.edges){
+    const a=byId[e.from], b=byId[e.to];
+    const x1=a.x+W, y1=a.y+H/2, x2=b.x-4, y2=b.y+H/2, dx=Math.max(50,Math.abs(x2-x1)/2), pts=[x1,y1,x1+dx,y1,x2-dx,y2,x2,y2];
+    edges+=`<path d="M${x1} ${y1} C${x1+dx} ${y1} ${x2-dx} ${y2} ${x2} ${y2}" class="dg-edge" marker-end="url(#${mid})"/>`;
+    const t=fmt(r.er[e.from+'>'+e.to]||0)+'/s', w=t.length*6.8+12, [mx,my]=bez(pts,0.5);
+    labels+=`<g transform="translate(${mx.toFixed(1)} ${my.toFixed(1)})"><rect x="${-w/2}" y="-9" width="${w}" height="18" rx="9" class="dg-lbl"/><text class="dg-lt" text-anchor="middle" y="4">${t}</text></g>`;
+  }
+  for(const n of d.nodes){
+    const s=r.ns[n.id], u=s&&isFinite(s.u)?s.u:0;
+    const name=n.type==='client'?p.source:C[n.type].name;
+    const sub=n.type==='client'?`${fmt(p.rate)} ${p.unit}`:`×${n.rep} replica${n.rep>1?'s':''}, ${Math.round(u*100)}% load`;
+    nodes+=`<g transform="translate(${n.x} ${n.y})"><rect width="${W}" height="${H}" rx="8" class="dg-node${n.type==='client'?' dg-client':''}"/>${ICON[n.type].replace('<svg ','<svg x="10" y="11" width="16" height="16" class="dg-ico" ')}<text x="32" y="24" class="dg-name">${esc(name.length>17?name.slice(0,16)+'…':name)}</text><text x="10" y="50" class="dg-sub">${sub}</text></g>`;
+  }
+  return `<svg class="diagram" viewBox="${minX} ${minY} ${maxX-minX} ${maxY-minY}" role="img" aria-label="Reference architecture for ${esc(p.title)}"><defs><marker id="${mid}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" class="dg-arh"/></marker></defs>${edges}${nodes}${labels}</svg>`;
+}
+function afterDesignChange(){ sel=null; endConnectMode(); resetLive(); renderGraph(); renderInspector(); updateCost(); saveDesign(); requestAnimationFrame(fitView); }
+
+/* ---------- Zoom ---------- */
+let zoom=1;
+function setZoom(z){
+  zoom=Math.max(0.35,Math.min(1.5,Math.round(z*100)/100));
+  $('#world').style.transform=`scale(${zoom})`;
+  $('#sizer').style.width=(1600*zoom)+'px'; $('#sizer').style.height=(900*zoom)+'px';
+  $('#zLbl').textContent=Math.round(zoom*100)+'%';
+}
+function fitView(){
+  const st=$('#stage'); if(!design||!st.clientWidth) return;
+  const mx=Math.max(...design.nodes.map(n=>n.x+W))+60, my=Math.max(...design.nodes.map(n=>n.y+H))+70;
+  setZoom(Math.min(1,st.clientWidth/mx,(st.clientHeight-40)/my));
+  st.scrollTo(0,0);
+}
+$('#zIn').onclick=()=>setZoom(zoom+0.1);
+$('#zOut').onclick=()=>setZoom(zoom-0.1);
+$('#zFit').onclick=fitView;
+$('#stage').addEventListener('wheel',e=>{ if(e.ctrlKey||e.metaKey){ e.preventDefault(); setZoom(zoom*(e.deltaY<0?1.1:0.9)); } },{passive:false});
+function toWorld(cx,cy){ const r=$('#world').getBoundingClientRect(); return {x:(cx-r.left)/zoom,y:(cy-r.top)/zoom}; }
+
+/* ---------- Palette ---------- */
+const pal=$('#palette');
+PALETTE.forEach(t=>{
+  const b=document.createElement('button'); b.className='chip'; b.dataset.type=t; b.title=C[t].desc;
+  b.innerHTML=`<span class="ico">${ICON[t]}</span>${C[t].name}`;
+  pal.appendChild(b);
+});
+let palDrag=null;
+pal.addEventListener('pointerdown',e=>{
+  const chip=e.target.closest('.chip'); if(!chip) return;
+  e.preventDefault();
+  palDrag={type:chip.dataset.type,sx:e.clientX,sy:e.clientY,moved:false,ghost:null};
+  chip.setPointerCapture(e.pointerId);
+});
+pal.addEventListener('pointermove',e=>{
+  if(!palDrag) return;
+  if(!palDrag.moved && Math.hypot(e.clientX-palDrag.sx,e.clientY-palDrag.sy)>6){
+    palDrag.moved=true;
+    const g=document.createElement('div'); g.className='node ghost'; g.innerHTML=`<div class="nhead"><span class="ico">${ICON[palDrag.type]}</span><span class="nname">${C[palDrag.type].name}</span></div>`;
+    document.body.appendChild(g); palDrag.ghost=g;
+  }
+  if(palDrag.ghost){ palDrag.ghost.style.left=(e.clientX-W/2)+'px'; palDrag.ghost.style.top=(e.clientY-H/2)+'px'; }
+});
+pal.addEventListener('pointerup',e=>{
+  if(!palDrag) return;
+  const d=palDrag; palDrag=null;
+  if(d.ghost) d.ghost.remove();
+  if(!d.moved){ addNode(d.type); return; }
+  const sr=$('#stage').getBoundingClientRect();
+  if(e.clientX>=sr.left&&e.clientX<=sr.right&&e.clientY>=sr.top&&e.clientY<=sr.bottom){
+    const pt=toWorld(e.clientX,e.clientY);
+    addNode(d.type, pt.x-W/2, pt.y-H/2, true);
+  }
+});
+pal.addEventListener('pointercancel',()=>{ if(palDrag&&palDrag.ghost) palDrag.ghost.remove(); palDrag=null; });
+
+const isFree=(x,y)=>!design.nodes.some(n=>Math.abs(n.x-x)<W+30&&Math.abs(n.y-y)<H+24);
+function spotAfter(src){
+  const x=Math.min(1600-W,src.x+W+60);
+  for(const dy of [0,110,-110,220,-220,330,-330,440]){ const y=src.y+dy; if(y>=0&&y<=900-H&&isFree(x,y)) return [x,y]; }
+  for(let y=20;y<=900-H;y+=100) if(isFree(x,y)) return [x,y];
+  return [x,src.y];
+}
+function freeSpot(){
+  for(let col=0;col<7;col++) for(let row=0;row<8;row++){ const x=40+col*(W+60), y=20+row*110; if(isFree(x,y)) return [x,y]; }
+  return [40,20];
+}
+function lastLeaf(){
+  const outs=new Set(design.edges.map(e=>e.from));
+  const leaves=design.nodes.filter(n=>!outs.has(n.id));
+  return leaves.sort((a,b)=>b.x-a.x)[0]||design.nodes[0];
+}
+function addNode(type,x,y,dropped){
+  let src=null;
+  if(!dropped){
+    src = (sel&&sel.kind==='node') ? design.nodes.find(n=>n.id===sel.id) : lastLeaf();
+    if(src) [x,y]=spotAfter(src); else [x,y]=freeSpot();
+  }
+  const n={id:newId(),type,x:Math.max(0,Math.round(x)),y:Math.max(0,Math.round(y)),rep:1};
+  design.nodes.push(n);
+  if(src) design.edges.push({id:newId('e'),from:src.id,to:n.id});
+  sel={kind:'node',id:n.id};
+  renderGraph(); renderInspector(); updateCost(); saveDesign(); ensureVisible(n);
+}
+function ensureVisible(n){
+  const st=$('#stage'), x=(n.x+W)*zoom, y=(n.y+H)*zoom;
+  if(x>st.scrollLeft+st.clientWidth-20||y>st.scrollTop+st.clientHeight-50){
+    const need=Math.min(st.clientWidth/(n.x+W+60),(st.clientHeight-40)/(n.y+H+70));
+    if(need>=0.6&&need<zoom) setZoom(need); else st.scrollTo({left:Math.max(0,x-st.clientWidth+80),top:Math.max(0,y-st.clientHeight+90)});
+  }
+}
+
+/* ---------- Graph rendering ---------- */
+const nodeLayer=$('#nodeLayer'), edgeLayer=$('#edgeLayer'), SVGNS='http://www.w3.org/2000/svg';
+function renderGraph(){
+  nodeLayer.innerHTML=''; edgeLayer.innerHTML='';
+  for(const k in nodeEls) delete nodeEls[k];
+  for(const k in edgeEls) delete edgeEls[k];
+  for(const e of design.edges){
+    const g=document.createElementNS(SVGNS,'g');
+    const hit=document.createElementNS(SVGNS,'path'); hit.setAttribute('class','edge-hit');
+    const line=document.createElementNS(SVGNS,'path'); line.setAttribute('class','edge-line'); line.setAttribute('marker-end','url(#ar-idle)');
+    const dots=document.createElementNS(SVGNS,'g');
+    g.append(line,dots,hit); edgeLayer.appendChild(g);
+    hit.addEventListener('pointerdown',ev=>{ev.stopPropagation(); sel={kind:'edge',id:e.id}; renderSel(); renderInspector();});
+    edgeEls[e.id]={g,hit,line,dots,phase:Math.random(),e};
+  }
+  for(const n of design.nodes){
+    const el=document.createElement('div');
+    el.className='node'+(n.type==='client'?' client':'');
+    el.tabIndex=0;
+    el.setAttribute('aria-label',(n.type==='client'?prob.source:C[n.type].name)+(n.type!=='client'?`, ${n.rep} replicas`:''));
+    el.innerHTML=`<div class="nhead"><span class="ico">${ICON[n.type]}</span><span class="nname">${esc(n.type==='client'?prob.source:C[n.type].name)}</span>${n.type!=='client'?'<span class="nrep mono"></span>':''}</div>
+      <div class="nstat mono"></div><div class="bar"><i></i></div>${n.type!=='client'?'<span class="inport"></span>':''}<span class="port" title="Drag to connect"></span>`;
+    el.style.left=n.x+'px'; el.style.top=n.y+'px';
+    nodeLayer.appendChild(el);
+    nodeEls[n.id]={el,stat:el.querySelector('.nstat'),bar:el.querySelector('.bar i'),rep:el.querySelector('.nrep'),n};
+    el.addEventListener('pointerdown',ev=>nodePointerDown(ev,n));
+    el.addEventListener('keydown',ev=>{ if(ev.key==='Enter'||ev.key===' '){ev.preventDefault(); sel={kind:'node',id:n.id}; renderSel(); renderInspector();} });
+    el.querySelector('.port').addEventListener('pointerdown',ev=>portPointerDown(ev,n));
+  }
+  $('#emptyCanvas').hidden=design.nodes.length>1;
+  layoutEdges(); renderSel(); updateNodeStats();
+}
+function edgePath(a,b){
+  const x1=a.x+W+6, y1=a.y+H/2, x2=b.x-6, y2=b.y+H/2;
+  const dx=Math.max(50,Math.abs(x2-x1)/2);
+  return `M${x1} ${y1} C${x1+dx} ${y1} ${x2-dx} ${y2} ${x2} ${y2}`;
+}
+function layoutEdges(){
+  const byId={}; design.nodes.forEach(n=>byId[n.id]=n);
+  for(const id in edgeEls){
+    const E=edgeEls[id], a=byId[E.e.from], b=byId[E.e.to]; if(!a||!b) continue;
+    const x1=a.x+W+6, y1=a.y+H/2, x2=b.x-6, y2=b.y+H/2, dx=Math.max(50,Math.abs(x2-x1)/2);
+    E.pts=[x1,y1,x1+dx,y1,x2-dx,y2,x2,y2];
+    const d=edgePath(a,b); E.line.setAttribute('d',d); E.hit.setAttribute('d',d);
+  }
+}
+function bez(p,t){ const u=1-t, a=u*u*u, b=3*u*u*t, c=3*u*t*t, d=t*t*t; return [a*p[0]+b*p[2]+c*p[4]+d*p[6], a*p[1]+b*p[3]+c*p[5]+d*p[7]]; }
+function renderSel(){
+  for(const id in nodeEls) nodeEls[id].el.classList.toggle('sel',!!sel&&sel.kind==='node'&&sel.id===id);
+  for(const id in edgeEls){ const s=!!sel&&sel.kind==='edge'&&sel.id===id; edgeEls[id].line.classList.toggle('sel',s); edgeEls[id].styled=false; if(s) edgeEls[id].line.setAttribute('marker-end','url(#ar-sel)'); }
+  updateEdgeStyles();
+}
+
+/* drag nodes */
+let drag=null;
+function nodePointerDown(ev,n){
+  if(ev.target.closest('.port')) return;
+  ev.preventDefault();
+  if(connectFrom){ const f=connectFrom; endConnectMode(); if(f!==n.id) tryConnect(f,n.id); return; }
+  sel={kind:'node',id:n.id}; renderSel(); renderInspector();
+  const p0=toWorld(ev.clientX,ev.clientY);
+  drag={n,ox:p0.x-n.x,oy:p0.y-n.y,el:nodeEls[n.id].el};
+  drag.el.setPointerCapture(ev.pointerId);
+  drag.el.onpointermove=e=>{
+    if(!drag) return;
+    const p=toWorld(e.clientX,e.clientY);
+    n.x=Math.max(0,Math.min(1600-W,Math.round(p.x-drag.ox)));
+    n.y=Math.max(0,Math.min(900-H,Math.round(p.y-drag.oy)));
+    drag.el.style.left=n.x+'px'; drag.el.style.top=n.y+'px'; layoutEdges();
+  };
+  drag.el.onpointerup=drag.el.onpointercancel=()=>{ if(drag){drag.el.onpointermove=null; drag=null; saveDesign();} };
+}
+/* connect */
+let conn=null, connectFrom=null;
+function startConnectMode(id){ connectFrom=id; $('#stage').classList.add('connecting'); nodeEls[id]&&nodeEls[id].el.classList.add('src'); toast('Now tap the component to connect to. Press Esc to cancel.'); }
+function endConnectMode(){ if(connectFrom&&nodeEls[connectFrom]) nodeEls[connectFrom].el.classList.remove('src'); connectFrom=null; $('#stage').classList.remove('connecting'); }
+function portPointerDown(ev,n){
+  ev.preventDefault(); ev.stopPropagation();
+  if(connectFrom){ endConnectMode(); return; }
+  const port=ev.currentTarget; port.setPointerCapture(ev.pointerId);
+  conn={n,sx:ev.clientX,sy:ev.clientY}; const temp=$('#tempEdge'); temp.hidden=false;
+  const move=e=>{
+    const p=toWorld(e.clientX,e.clientY); const x=p.x, y=p.y;
+    const x1=n.x+W+6, y1=n.y+H/2, dx=Math.max(40,Math.abs(x-x1)/2);
+    temp.setAttribute('d',`M${x1} ${y1} C${x1+dx} ${y1} ${x-dx} ${y} ${x} ${y}`);
+  };
+  move(ev);
+  port.onpointermove=move;
+  port.onpointerup=e=>{
+    port.onpointermove=port.onpointerup=null; temp.hidden=true; temp.setAttribute('d','');
+    const tEl=document.elementFromPoint(e.clientX,e.clientY); const target=tEl&&tEl.closest('.node');
+    const moved=Math.hypot(e.clientX-conn.sx,e.clientY-conn.sy)>8;
+    const id=target&&Object.keys(nodeEls).find(k=>nodeEls[k].el===target);
+    if(id&&id!==n.id) tryConnect(n.id,id);
+    else if(!moved) startConnectMode(n.id);
+    conn=null;
+  };
+}
+function reachable(from,to){
+  const kids={}; design.edges.forEach(e=>{(kids[e.from]=kids[e.from]||[]).push(e.to)});
+  const seen=new Set(),st=[from];
+  while(st.length){const x=st.pop(); if(x===to) return true; if(seen.has(x)) continue; seen.add(x); (kids[x]||[]).forEach(k=>st.push(k));}
+  return false;
+}
+function tryConnect(a,b){
+  if(a===b) return;
+  if(b==='client'){ toast(`${prob.source} only send traffic. They can’t receive it.`); return; }
+  if(design.edges.some(e=>e.from===a&&e.to===b)){ toast('Those two are already connected.'); return; }
+  if(reachable(b,a)){ toast('That connection would create a loop. Requests have to flow one way.'); return; }
+  const e={id:newId('e'),from:a,to:b}; design.edges.push(e); sel={kind:'node',id:b};
+  renderGraph(); renderInspector(); saveDesign();
+}
+$('#stage').addEventListener('pointerdown',e=>{ if(e.target.closest('.node,.inspector,.edge-hit,.zoombar')) return; if(connectFrom) endConnectMode(); if(sel){ sel=null; renderSel(); renderInspector(); } });
+document.addEventListener('keydown',e=>{
+  if(prob&&connectFrom&&e.key==='Escape'){ endConnectMode(); return; }
+  if(!prob||!sel) return;
+  if(e.target.matches('input,textarea')) return;
+  if(e.key==='Delete'||e.key==='Backspace'){ e.preventDefault(); removeSelected(); }
+  if(e.key==='Escape'){ endConnectMode(); sel=null; renderSel(); renderInspector(); }
+});
+function removeSelected(){
+  if(!sel) return;
+  if(sel.kind==='node'){ if(sel.id==='client') return; design.nodes=design.nodes.filter(n=>n.id!==sel.id); design.edges=design.edges.filter(e=>e.from!==sel.id&&e.to!==sel.id); delete live.fails[sel.id]; }
+  else design.edges=design.edges.filter(e=>e.id!==sel.id);
+  sel=null; renderGraph(); renderInspector(); updateCost(); saveDesign();
+}
+
+/* ---------- Inspector ---------- */
+function renderInspector(){
+  const ins=$('#inspector');
+  if(!sel){ ins.hidden=true; return; }
+  ins.hidden=false;
+  if(sel.kind==='edge'){
+    const e=design.edges.find(x=>x.id===sel.id); if(!e){ins.hidden=true;return;}
+    const nm=id=>{const n=design.nodes.find(x=>x.id===id); return n.type==='client'?prob.source:C[n.type].name};
+    const r=live.stats&&live.stats.er[e.from+'>'+e.to];
+    ins.innerHTML=`<button class="xbtn" aria-label="Close">×</button><h4>Connection</h4><p>${esc(nm(e.from))} to ${esc(nm(e.to))}${r!=null&&live.running?`, carrying ${fmt(r)}/s`:''}.</p><div class="irow"><button class="btn small danger" id="rmBtn">Remove connection</button></div>`;
+  } else {
+    const n=design.nodes.find(x=>x.id===sel.id); if(!n){ins.hidden=true;return;}
+    if(n.type==='client'){
+      ins.innerHTML=`<button class="xbtn" aria-label="Close">×</button><h4><span class="ico">${ICON.client}</span>${esc(prob.source)}</h4><p>The traffic source. Sends ${fmt(prob.rate)} ${prob.unit} at normal load; use the traffic slider to push harder while running.</p>${conHTML(n)}`;
+    } else {
+      const c=C[n.type], down=live.fails[n.id]||0;
+      ins.innerHTML=`<button class="xbtn" aria-label="Close">×</button><h4><span class="ico">${ICON[n.type]}</span>${c.name}</h4><p>${esc(c.desc)}</p>
+      <div class="specs"><span>Capacity per replica</span><span class="mono">${fmt(baseCap(n.type,prob))}/s</span><span>Base latency</span><span class="mono">${c.lat} ms</span>${c.hit?`<span>Read hit rate</span><span class="mono">${Math.round(c.hit*100)}%</span>`:''}<span>Cost per replica</span><span class="mono">${money(c.cost)}/mo</span></div>
+      <div class="stepper"><span>Replicas</span><button id="repDn" aria-label="Remove a replica">−</button><span class="v mono" id="repV">${n.rep}</span><button id="repUp" aria-label="Add a replica">+</button><span class="mono note">${money(c.cost*n.rep)}/mo</span></div>
+      ${conHTML(n)}
+      <div class="irow">${live.running?(down?`<button class="btn small" id="recover">Bring replicas back</button>`:`<button class="btn small" id="failOne">Take a replica down</button>`):''}<button class="btn small danger" id="rmBtn">Remove</button></div>`;
+      $('#repDn').onclick=()=>{ if(n.rep>1){n.rep--; afterRep();} };
+      $('#repUp').onclick=()=>{ if(n.rep<(c.maxRep||40)){n.rep++; afterRep();} else toast(`${c.name} can’t be scaled out.`); };
+      const f=$('#failOne'); if(f) f.onclick=()=>{ live.fails[n.id]=1; renderInspector(); toast(`One ${c.name.toLowerCase()} replica is down.`); };
+      const rc=$('#recover'); if(rc) rc.onclick=()=>{ delete live.fails[n.id]; renderInspector(); toast('Replicas are back.'); };
+    }
+  }
+  const cs=$('#conSel'); if(cs) cs.onchange=()=>{ if(cs.value){ const from=sel.id; tryConnect(from,cs.value); sel={kind:'node',id:from}; renderSel(); renderInspector(); } };
+  ins.querySelectorAll('[data-rm]').forEach(b=>b.onclick=()=>{ design.edges=design.edges.filter(e=>e.id!==b.dataset.rm); const keep=sel; renderGraph(); sel=keep; renderSel(); renderInspector(); saveDesign(); });
+  const x=ins.querySelector('.xbtn'); if(x) x.onclick=()=>{ sel=null; renderSel(); renderInspector(); };
+  const rm=$('#rmBtn'); if(rm) rm.onclick=removeSelected;
+}
+const nodeName=n=>n.type==='client'?prob.source:C[n.type].name;
+function conHTML(n){
+  const outs=design.edges.filter(e=>e.from===n.id);
+  const opts=design.nodes.filter(m=>m.id!==n.id&&m.type!=='client'&&!outs.some(e=>e.to===m.id)&&!reachable(m.id,n.id));
+  const same={}; design.nodes.forEach(m=>{same[m.type]=(same[m.type]||0)+1});
+  const label=m=>esc(nodeName(m))+(same[m.type]>1?` (×${m.rep})`:'');
+  return `${outs.length?`<label>Sends to</label><div class="conlist">${outs.map(e=>{const m=design.nodes.find(x=>x.id===e.to);return `<div><span>${m?label(m):''}</span><button data-rm="${e.id}">Disconnect</button></div>`}).join('')}</div>`:''}
+  ${opts.length?`<label for="conSel">Connect to</label><select id="conSel"><option value="">Choose a component…</option>${opts.map(m=>`<option value="${m.id}">${label(m)}</option>`).join('')}</select>`:''}`;
+}
+function afterRep(){ renderInspector(); updateCost(); updateNodeStats(); saveDesign(); }
+
+/* ---------- Node & edge live styling ---------- */
+const stateOf=u=>u>1.0001?'hot':(u>0.8?'warm':'ok');
+function updateNodeStats(){
+  const S=live.running&&live.stats?live.stats.ns:null;
+  for(const id in nodeEls){
+    const {el,stat,bar,rep,n}=nodeEls[id]; const s=S&&S[id];
+    const down=live.fails[id]||0;
+    if(rep){ rep.textContent='×'+n.rep+(down?' (1 down)':''); rep.classList.toggle('down',!!down); }
+    el.classList.remove('warm','hot'); bar.className='';
+    if(!S){
+      stat.textContent = n.type==='client' ? `${fmt(prob.rate)} ${prob.unit}` : `${fmt(baseCap(n.type,prob)*n.rep)}/s capacity`;
+      bar.style.width='0';
+      continue;
+    }
+    if(n.type==='client'){ stat.textContent=`${fmt(live.stats.rate)}/s sent`; bar.style.width='0'; continue; }
+    if(!s){ stat.textContent='no traffic'; bar.style.width='0'; continue; }
+    const u=s.u, st=stateOf(u);
+    let txt=`${fmt(s.in)}/s  ${isFinite(u)?Math.round(u*100)+'%':'down'}`;
+    if(n.type==='queue'&&s.lag>0.3) txt=`${fmt(s.in)}/s  lag ${s.lag.toFixed(1)}s`;
+    stat.textContent=txt;
+    bar.style.width=Math.min(100,(isFinite(u)?u:1)*100)+'%';
+    if(st!=='ok'){ el.classList.add(st); bar.classList.add(st); }
+  }
+}
+function updateEdgeStyles(){
+  const S=live.running&&live.stats?live.stats.ns:null;
+  for(const id in edgeEls){
+    const E=edgeEls[id];
+    if(sel&&sel.kind==='edge'&&sel.id===id) continue;
+    const r=S?live.stats.er[E.e.from+'>'+E.e.to]:0;
+    const st=(S&&r>0)?stateOf(S[E.e.to]?S[E.e.to].u:0):null;
+    if(st===E.state&&E.styled) continue;
+    E.styled=true; E.state=st;
+    E.line.classList.remove('ok','warm','hot');
+    if(st){ E.line.classList.add(st); E.line.setAttribute('marker-end',`url(#ar-${st})`); }
+    else E.line.setAttribute('marker-end','url(#ar-idle)');
+  }
+}
+function updateParticles(dt){
+  for(const id in edgeEls){
+    const E=edgeEls[id];
+    const r=live.running&&live.stats?(live.stats.er[E.e.from+'>'+E.e.to]||0):0;
+    const n=r>0?Math.max(1,Math.min(9,Math.ceil(Math.log10(r+1)*1.6))):0;
+    const kids=E.dots.childNodes;
+    while(kids.length<n){ const c=document.createElementNS(SVGNS,'circle'); c.setAttribute('r','3.2'); c.setAttribute('class','dot ok'); E.dots.appendChild(c); }
+    while(kids.length>n) E.dots.lastChild.remove();
+    if(!n||!E.pts) continue;
+    if(!reduceMotion) E.phase=(E.phase+dt*(0.25+0.3*Math.min(1,Math.log10(r+1)/5)))%1;
+    const cls='dot '+(E.state||'ok');
+    if(E.dotCls!==cls){ E.dotCls=cls; for(const c of kids) c.setAttribute('class',cls); E.dots.dataset.n=''; }
+    if(E.dots.dataset.n!==String(n)){ E.dots.dataset.n=String(n); for(const c of kids) c.setAttribute('class',cls); }
+    for(let i=0;i<n;i++){ const [x,y]=bez(E.pts,(E.phase+i/n)%1); kids[i].setAttribute('transform',`translate(${x.toFixed(1)} ${y.toFixed(1)})`); }
+  }
+}
+
+/* ---------- Charts ---------- */
+const METRICS=[
+  {k:'thr',label:'Successful throughput',f:v=>fmt(v)+'/s',lim:()=>null,ref:h=>h.rate},
+  {k:'p99',label:'p99 latency',f:v=>Math.round(v)+' ms',lim:()=>prob.crit.p99},
+  {k:'err',label:'Error rate',f:v=>(v<10?v.toFixed(2):v.toFixed(1))+'%',lim:()=>prob.crit.err},
+  {k:'lag',label:'Pipeline lag',f:v=>v.toFixed(1)+' s',lim:()=>prob.crit.lag!=null?prob.crit.lag:null}
+];
+function buildCharts(){
+  $('#charts').innerHTML=METRICS.map(m=>`<div class="chart"><div class="ct"><span>${m.label}</span><span class="lim mono" id="lim-${m.k}"></span></div><div class="cv mono" id="cv-${m.k}">–</div><canvas id="cc-${m.k}"></canvas></div>`).join('');
+  METRICS.forEach(m=>{ const l=m.lim(); $('#lim-'+m.k).textContent = l!=null ? 'target ≤ '+m.f(l) : (m.k==='thr'?'':'no target'); });
+  drawCharts();
+}
+function cssVar(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim();}
+let COLS=null;
+const loadCols=()=>{ COLS={ok:cssVar('--ok'),hot:cssVar('--hot'),muted:cssVar('--muted'),line:cssVar('--line')}; };
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change',()=>{ loadCols(); drawCharts(); });
+function drawCharts(){
+  if(!COLS) loadCols();
+  if($('#cLive').hidden) return;
+  const h=live.hist, cols=COLS;
+  const dpr=window.devicePixelRatio||1;
+  METRICS.forEach(m=>{
+    const cv=$('#cc-'+m.k); if(!cv) return;
+    const w=cv.clientWidth, hh=cv.clientHeight; if(!w) return;
+    if(cv.width!==Math.round(w*dpr)||cv.height!==Math.round(hh*dpr)){ cv.width=Math.round(w*dpr); cv.height=Math.round(hh*dpr); }
+    const g=cv.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,w,hh);
+    const lim=m.lim(); const vals=h.map(x=>x[m.k]); const refs=m.ref?h.map(m.ref):[];
+    const last=vals.length?vals[vals.length-1]:null;
+    const vEl=$('#cv-'+m.k);
+    if(last==null){ vEl.textContent='–'; vEl.className='cv mono'; }
+    else { vEl.textContent=m.f(last); vEl.className='cv mono'+(lim!=null?(last>lim?' hot':' ok'):''); }
+    let max=Math.max(1e-6,...vals,...refs,lim!=null?lim*1.4:0)*1.1;
+    const N=120, x=i=>(i+(N-vals.length))/(N-1)*w, y=v=>hh-2-(v/max)*(hh-6);
+    g.strokeStyle=cols.line; g.lineWidth=1; g.beginPath(); g.moveTo(0,hh-1.5); g.lineTo(w,hh-1.5); g.stroke();
+    if(lim!=null){ g.setLineDash([4,4]); g.strokeStyle=cols.hot; g.globalAlpha=.7; g.beginPath(); g.moveTo(0,y(lim)); g.lineTo(w,y(lim)); g.stroke(); g.setLineDash([]); g.globalAlpha=1; }
+    if(refs.length){ g.setLineDash([3,3]); g.strokeStyle=cols.muted; g.beginPath(); refs.forEach((v,i)=>i?g.lineTo(x(i),y(v)):g.moveTo(x(i),y(v))); g.stroke(); g.setLineDash([]); }
+    if(vals.length>1){
+      const bad=lim!=null&&last>lim;
+      g.strokeStyle=bad?cols.hot:cols.ok; g.lineWidth=2; g.beginPath(); vals.forEach((v,i)=>i?g.lineTo(x(i),y(v)):g.moveTo(x(i),y(v))); g.stroke();
+      g.globalAlpha=.12; g.fillStyle=bad?cols.hot:cols.ok; g.lineTo(x(vals.length-1),hh); g.lineTo(x(0),hh); g.closePath(); g.fill(); g.globalAlpha=1;
+    }
+  });
+}
+window.addEventListener('resize',()=>{ if(prob) drawCharts(); });
+
+/* ---------- Live loop ---------- */
+function resetLive(){ live.t=0; live.st={}; live.fails={}; live.hist=[]; live.acc=0; live.histAcc=0; live.stats=null; if(prob){ updateNodeStats(); updateEdgeStyles(); updateParticles(0); drawCharts(); } }
+function setRunning(on){
+  live.running=on;
+  const b=$('#runBtn');
+  b.querySelector('span').textContent=on?'Pause':'Run';
+  b.querySelector('svg').innerHTML=on?'<path d="M3 2h3v10H3zM8 2h3v10H8z" fill="currentColor"/>':'<path d="M3 2l9 5-9 5z" fill="currentColor"/>';
+  $('#liveIdle').hidden=on||live.hist.length>0;
+  if(on){ setCTab('live'); }
+  else { updateNodeStats(); updateEdgeStyles(); updateParticles(0); }
+  renderInspector();
+}
+function stopLive(){ if(live.running) setRunning(false); }
+$('#runBtn').onclick=()=>{
+  if(!live.running && !analyze(design).kids.client.length){ toast(`Connect ${prob.source} to a component first.`); return; }
+  setRunning(!live.running);
+};
+$('#resetBtn').onclick=()=>{ const was=live.running; resetLive(); if(was) setRunning(true); else $('#liveIdle').hidden=false; renderInspector(); };
+$('#mult').oninput=e=>{ live.mult=parseFloat(e.target.value); updateMultLbl(); };
+function updateMultLbl(){ if(prob) $('#multLbl').textContent=`×${live.mult.toFixed(1)} (${fmt(prob.rate*live.mult)} ${prob.unit})`; }
+function tickLive(dt){
+  const t=live.t;
+  const rate=prob.rate*live.mult*(1+0.03*Math.sin(t*1.7)+0.02*Math.sin(t*4.3+1));
+  live.stats=step(design,prob,live.st,rate,live.fails,dt);
+  live.t+=dt; live.histAcc+=dt;
+  if(live.histAcc>=0.5){
+    live.histAcc=0;
+    const s=live.stats;
+    live.hist.push({thr:s.thr,p99:s.p99,err:s.err,lag:s.lag,rate:s.rate});
+    if(live.hist.length>120) live.hist.shift();
+    if(live.hist.length%2===0||live.hist.length<4) drawCharts();
+  }
+}
+let lastTs=0, uiAcc=0;
+function frame(ts){
+  const dt=Math.min(0.1,(ts-lastTs)/1000||0); lastTs=ts;
+  if(live.running&&prob){
+    live.acc+=dt;
+    while(live.acc>=0.1){ live.acc-=0.1; tickLive(0.1); }
+    uiAcc+=dt; if(uiAcc>0.15){ uiAcc=0; updateNodeStats(); updateEdgeStyles(); }
+    if(!document.hidden) updateParticles(dt);
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+function updateCost(){
+  const c=designCost(design), b=prob.crit.cost;
+  const el=$('#costLbl'); el.textContent=`${money(c)} of ${money(b)}`; el.className='mono '+(c>b?'hott':'');
+}
+
+/* ---------- Console tabs & submit ---------- */
+$('#ctabs').addEventListener('click',e=>{const t=e.target.closest('[data-ctab]'); if(t) setCTab(t.dataset.ctab);});
+function setCTab(t){
+  ctab=t; document.querySelectorAll('#ctabs .tab').forEach(b=>b.setAttribute('aria-selected',b.dataset.ctab===t));
+  $('#cLive').hidden=t!=='live'; $('#cRes').hidden=t!=='res';
+  if(t==='live') drawCharts();
+}
+$('#submitBtn').onclick=()=>{
+  const p=prob, out=$('#cRes');
+  setCTab('res');
+  const issues=validate(design,p);
+  if(issues.length){
+    out.innerHTML=`<div class="banner"><span class="verdict hott">Design incomplete</span><span>Fix these before the tests can run.</span></div><ul class="issues">${issues.map(i=>`<li>${esc(i)}</li>`).join('')}</ul>`;
+    return;
+  }
+  const tests=scenarioTests(p).map(t=>({...t,r:runTest(design,p,t.kind)}));
+  interview.done.scale=true; saveInterview();
+  const cost=designCost(design), overBudget=cost>p.crit.cost;
+  const passed=tests.filter(t=>t.r.pass).length;
+  const ok=passed===tests.length&&!overBudget;
+  const lbl={p99:'p99 latency',err:p.unit==='events/s'?'Lost events':'Errors',lag:'Max lag'};
+  const fv={p99:v=>Math.round(v)+' ms',err:v=>v.toFixed(2)+'%',lag:v=>v.toFixed(1)+' s'};
+  const keys=['p99','err'].concat(p.crit.lag!=null?['lag']:[]);
+  const tightest=tests.reduce((best,t)=>!best||(t.r.bottleneck?.util||0)>(best.r.bottleneck?.util||0)?t:best,null);
+  const pressure=tightest?.r.bottleneck;
+  const advice=pressure?pressure.type==='queue'?'Check consumer capacity and partitions; broker headroom alone will not drain a growing backlog.':pressure.type==='cache'||pressure.type==='cdn'?'Check hit rate and origin traffic, then add cache capacity if this layer is still saturated.':pressure.type==='extapi'?'The provider quota is fixed. Reduce calls with caching, batching, or backoff instead of adding replicas.':`Scale ${pressure.name.toLowerCase()} capacity or reduce the work reaching it, then rerun the failing scenario.`:'Connect the traffic source to a component before running the design.';
+  const failedTests=tests.filter(t=>!t.r.pass);
+  const failedMetrics=[...new Set(failedTests.flatMap(t=>t.r.fails.map(k=>lbl[k])))];
+  const reviewText=failedTests.length
+    ?`${failedTests.map(t=>t.name).join(', ')} missed ${failedMetrics.join(', ')}. ${pressure?`${tightest.name} put the most pressure on ${pressure.name.toLowerCase()} at ${isFinite(pressure.util)?Math.round(pressure.util*100)+'% utilization':'over capacity'}. ${advice}`:''}`
+    :overBudget?'All traffic checks passed, but the design exceeds its monthly budget. Reduce cost while preserving the capacity needed for the spike and failure tests, then submit again.'
+    :'The design met the simulator targets. Use this review to explain where capacity sits and how the system behaves beyond the model.';
+  out.innerHTML=`<div class="banner"><span class="verdict ${ok?'okt':'hott'}">${ok?'Accepted':'Not accepted'}</span><span>${passed} of ${tests.length} tests passed</span><span class="mono ${overBudget?'hott':''}">${money(cost)} of ${money(p.crit.cost)} per month${overBudget?', over budget':''}</span></div>
+  <div class="tests">${tests.map(t=>`<div class="test ${t.r.pass?'pass':'fail'}"><h5><span>${esc(t.name)}</span><span class="${t.r.pass?'okt':'hott'}">${t.r.pass?'Passed':'Failed'}</span></h5>
+    ${keys.map(k=>`<div class="m"><span>${lbl[k]}</span><span class="mono ${t.r.fails.includes(k)?'bad':''}">${fv[k](t.r[k])} <span class="note">/ ${fv[k](p.crit[k])}</span></span></div>`).join('')}
+    <div class="m"><span>Avg. throughput</span><span class="mono">${fmt(t.r.throughput)} ${esc(p.unit)}</span></div>
+    <div class="m"><span>Peak utilization</span><span class="mono">${t.r.bottleneck?`${esc(t.r.bottleneck.name)} · ${isFinite(t.r.bottleneck.util)?Math.round(t.r.bottleneck.util*100)+'%':'over capacity'}`:'—'}</span></div></div>`).join('')}</div>
+  <section class="review" aria-label="Architecture review"><h3>Architecture review</h3>
+    <p>${esc(reviewText)}</p>
+    <div class="review-list">
+      <div class="review-item"><b>Traffic path</b><span>Explain how requests split, fan out, or stop at a cache in your chosen topology.</span></div>
+      <div class="review-item"><b>Failure recovery</b><span>Describe what users see during a node loss and how recovery avoids data loss.</span></div>
+      <div class="review-item"><b>Data guarantees</b><span>State consistency, durability, and retry behavior; the simulator does not model these.</span></div>
+    </div>
+  </section>
+  <p class="note" style="margin-top:10px">Latency is a modeled p99: the 99th percentile of interval estimates during the run, not request-level traces. Use the results to compare designs; real systems also depend on workload shape, network behavior, and data guarantees.</p>
+  ${!ok?`<p class="note">Change the busiest tier or its upstream traffic, then submit again to compare the result.</p>`:''}`;
+  const subs=store.get('loadline:subs:'+p.id,[]); subs.push({at:Date.now(),ok,cost}); store.set('loadline:subs:'+p.id,subs.slice(-30));
+  if(ok){ const s=solved(); s[p.id]=true; store.set('loadline:solved',s); toast('Accepted. Nice work.'); }
+  if(ltab==='subs') setLTab('subs');
+  else if(ltab==='interview') renderInterview();
+  if(window.innerWidth<=860) out.scrollIntoView({behavior:'smooth',block:'start'});
+};
+
+/* ---------- Toast ---------- */
+let toastT=null;
+function toast(msg){
+  let t=$('.toast'); if(!t){ t=document.createElement('div'); t.className='toast'; t.setAttribute('role','status'); document.body.appendChild(t); }
+  t.textContent=msg; clearTimeout(toastT); toastT=setTimeout(()=>t.remove(),2600);
+}
+
+route();
+</script>
+</body>
+</html>
